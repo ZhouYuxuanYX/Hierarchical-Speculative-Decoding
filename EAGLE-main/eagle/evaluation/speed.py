@@ -3,8 +3,9 @@ from transformers import AutoTokenizer
 import numpy as np
 
 tokenizer=AutoTokenizer.from_pretrained("/home/lyh/weights/hf/llama2chat/13B/")
-jsonl_file = "llama-2-chat-70b-fp16-ea-in-temperature-0.0.jsonl"
-jsonl_file_base = "llama-2-chat-70b-fp16-base-in-temperature-0.0.jsonl"
+jsonl_file = "llama-2-chat-70b-fp16-ea-in-temperature-1.0_ea.jsonl"
+jsonl_file_base = "llama-2-chat-70b-fp16-base-in-temperature-1.0_baseline.jsonl"
+jsonl_file_hst = "llama-2-chat-70b-fp16-base-in-temperature-1.0_ea_hst.jsonl"
 data = []
 with open(jsonl_file, 'r', encoding='utf-8') as file:
     for line in file:
@@ -44,9 +45,33 @@ for datapoint in data:
     total_token+=tokens
 
 
+data = []
+with open(jsonl_file_hst, 'r', encoding='utf-8') as file:
+    for line in file:
+        json_obj = json.loads(line)
+        data.append(json_obj)
 
-# print('speed',np.array(speeds).mean())
-# print('speed0',np.array(speeds0).mean())
+
+total_time=0
+total_token=0
+speeds1=[]
+for datapoint in data:
+    qid=datapoint["question_id"]
+    answer=datapoint["choices"][0]['turns']
+    tokens = 0
+    for i in answer:
+        tokens += (len(tokenizer(i).input_ids) - 1)
+    times = sum(datapoint["choices"][0]['wall_time'])
+    speeds1.append(tokens / times)
+    total_time+=times
+    total_token+=tokens
+
+
+
+
+print('speed',np.array(speeds).mean())
+print('speed0',np.array(speeds0).mean())
+print('speed1',np.array(speeds1).mean())
 print("ratio",np.array(speeds).mean()/np.array(speeds0).mean())
 
 
