@@ -3,9 +3,9 @@ from transformers import AutoTokenizer
 import numpy as np
 
 tokenizer=AutoTokenizer.from_pretrained("meta-llama/Llama-3.1-8B-Instruct")
-jsonl_file = "llama-2-chat-70b-fp16-ea-in-temperature-1.0_ea.jsonl"
-jsonl_file_base = "llama-2-chat-70b-fp16-base-in-temperature-1.0_baseline.jsonl"
-jsonl_file_hst = "llama-2-chat-70b-fp16-base-in-temperature-1.0_ea_hst.jsonl"
+jsonl_file = "llama38b2_40-temperature-1.0_ea.jsonl"
+jsonl_file_base = "llama38b2_40-temperature-1.0_baseline.jsonl"
+jsonl_file_hst = "llama38b2_40-temperature-1.0_ea_hst.jsonl"
 data = []
 with open(jsonl_file, 'r', encoding='utf-8') as file:
     for line in file:
