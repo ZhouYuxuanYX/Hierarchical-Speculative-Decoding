@@ -158,7 +158,7 @@ def get_model_answers(
             torch.cuda.synchronize()
             start_time = time.time()
 
-            output_ids, new_token, idx = model.naivegenerate(
+            output_ids, new_token, idx, _ = model.naivegenerate(
                 torch.as_tensor(input_ids).cuda(),
                 temperature=temperature,
                 log=True,
@@ -213,6 +213,7 @@ def get_model_answers(
     for question in tqdm(questions):
 
         choices = []
+        question_info = []
         for i in range(num_choices):
             torch.manual_seed(i)
             messages = [
@@ -223,24 +224,30 @@ def get_model_answers(
             idxs = []
             new_tokens = []
             wall_time = []
+            total_info = {'tokenizer_time': [], 'tokenizer_decode_time': [], 'generate_time': [], 'processor_time':[],
+                           'kv_time':[],'base_model_time':[],'length_time':[],}
             for j in range(len(question["turns"])):
                 qs = question["turns"][j]
                 messages.append({
                     "role": "user",
                     "content": qs
                 })
+                time_start = time.perf_counter()
                 prompt = tokenizer.apply_chat_template(
                     messages,
                     tokenize=False,
                     add_generation_prompt=True,
                 )
                 input_ids = tokenizer([prompt], add_special_tokens=False, ).input_ids
+                time_end = time.perf_counter()
+                total_info['tokenizer_time'].append(time_end - time_start)
 
                 # try:
                 torch.cuda.synchronize()
                 start_time = time.time()
+                time_start = time.perf_counter()
 
-                output_ids, new_token, idx = model.naivegenerate(
+                output_ids, new_token, idx, return_info = model.naivegenerate(
                     torch.as_tensor(input_ids).cuda(),
                     temperature=temperature,
                     log=True,
@@ -248,6 +255,9 @@ def get_model_answers(
                 )
                 torch.cuda.synchronize()
                 total_time = time.time() - start_time
+                time_end = time.perf_counter()
+                total_info['generate_time'].append(time_end - time_start)
+
                 output_ids = output_ids[0][len(input_ids[0]):]
                 # be consistent with the template's stop_token_ids
                 stop_token_ids = [
@@ -263,11 +273,14 @@ def get_model_answers(
                     ]
                     if len(stop_token_ids_index) > 0:
                         output_ids = output_ids[: stop_token_ids_index[0]]
-
+                time_start = time.perf_counter()
                 output = tokenizer.decode(
                     output_ids,
                     spaces_between_special_tokens=False,
                 )
+                time_end = time.perf_counter()
+                total_info['tokenizer_decode_time'].append(time_end - time_start)
+
                 # stop_str = "</s>"
                 # if stop_str and output.find(stop_str) > 0:
                 #     output = output[: output.find(stop_str)]
@@ -287,8 +300,19 @@ def get_model_answers(
                     "role": "assistant",
                     "content": output
                 })
+                total_info['processor_time'].append(return_info['processor_time'])
+                total_info['kv_time'].append(return_info['kv_time'])
+                total_info['base_model_time'].append(return_info['base_model_time'])
+                total_info['length_time'].append(return_info['length_time'])
             # torch.cuda.empty_cache()
             choices.append({"index": i, "turns": turns, "idxs": idxs, "new_tokens": new_tokens, "wall_time": wall_time})
+            question_info.append({"tokenizer_time":total_info['tokenizer_time'],
+                                   "tokenizer_decode_time":total_info['tokenizer_decode_time'], 
+                                   "generate_time":total_info['generate_time'],
+                                   "processor_time":total_info['processor_time'],
+                                   "kv_time":total_info['kv_time'],
+                                   "base_model_time":total_info['base_model_time'],
+                                   "length_time":total_info['length_time']})
 
         # Dump answers
         os.makedirs(os.path.dirname(answer_file), exist_ok=True)
@@ -302,6 +326,10 @@ def get_model_answers(
             }
             fout.write(json.dumps(ans_json) + "\n")
 
+        os.makedirs(os.path.dirname(info_file), exist_ok=True)
+        with open(os.path.expanduser(info_file), "a") as fout:
+            for info in question_info:
+                fout.write(json.dumps(info) + "\n")
 
 def reorg_answer_file(answer_file):
     """Sort by question id and de-duplication"""
@@ -395,7 +423,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--temperature",
         type=float,
-        default=0.0,
+        default=1.0,
     )
 
     parser.add_argument(
@@ -403,6 +431,12 @@ if __name__ == "__main__":
         type=str,
         default="mc_sim_7b_63",
     )
+    parser.add_argument(
+        "--folder_id",
+        type=str,
+        default="",
+    )
+
 
     args = parser.parse_args()
 
@@ -416,9 +450,11 @@ if __name__ == "__main__":
     if args.answer_file:
         answer_file = args.answer_file
     else:
-        answer_file = f"{args.bench_name}/{args.model_id}.jsonl"
+        answer_file = f"{args.bench_name}/{args.folder_id}/{args.model_id}_baseline.jsonl"
 
     print(f"Output to {answer_file}")
+    info_file = answer_file.replace(".jsonl", "_info.jsonl")
+    print(f"info Output to {info_file}")
 
     run_eval(
         args.base_model_path,

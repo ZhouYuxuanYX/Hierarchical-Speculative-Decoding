@@ -36,11 +36,12 @@ class Timer:
 
 
 def prepare_logits_processor(
-        temperature: float = 0.0,
+        temperature: float = 1.0,
         repetition_penalty: float = 0.0,
-        top_p: float = 0.0,
-        top_k: int = 0
+        top_p: float = 1.0,
+        top_k: int = 10
 ) -> LogitsProcessorList:
+    print(f'top_p: {top_p} || top_k: {top_k} || temperature: {temperature} || repetition_penalty: {repetition_penalty}')
     processor_list = LogitsProcessorList()
     if temperature > 1e-5:
         if temperature >= 1e-5 and temperature != 1.0:
@@ -417,7 +418,7 @@ def evaluate_posterior(
         return torch.tensor(best_candidate), accept_length - 1, sample_p
 
     else:
-        # q = torch.nn.functional.one_hot(candidates, num_classes=logits.shape[-1])
+        logits = logits_processor(None, logits)
         p = logits.softmax(dim=-1).double() if "mps" not in str(logits.device) else logits.softmax(dim=-1)
         n_matches = 1
         current_step_match = 0
@@ -430,15 +431,6 @@ def evaluate_posterior(
                 ind = b
             else:
                 continue
-
-
-            # print("multidraft")
-            # print(multidraft)
-
-            # print("n_matches")
-            # print(n_matches)
-            # print(ind)
-            # print(b)
 
             # avoid token id = -1 due to the batch generation after eos token
             new_candidate_length = (candidates[ind:ind + 1, -candidate_length:] != -1).sum().item()
@@ -458,25 +450,9 @@ def evaluate_posterior(
             # selected by the assistant, respectively.
             # to be more precise using double precision
             # mps does not support float64 tensor
-            # # print(candidate_logits.device)
 
             # before squeeze, the shape is (1, 1, candidate_length)
             # after squeeze: (1, candidate_length)
-            # # print("debug")
-            # print(hist_length)
-            # print(candidate_length)
-            # print(new_candidate_input_ids.shape)
-
-            # q_i = q[ind:ind + 1, torch.arange(n_matches, candidate_length), new_candidate_input_ids].squeeze(1)
-            #
-            # # # print("check distribution")
-            # # print(p[:, torch.arange(hist_length, candidate_length)].topk(10, dim=-1)[0])
-            # # print(q[:, torch.arange(hist_length, candidate_length)].topk(10, dim=-1)[0])
-            #
-            # q_previous = torch.roll(q_i, 1, 1)
-            # q_previous[:, 0] = 1
-            # log_q_previous = torch.exp(torch.log(q_previous).cumsum(1).unsqueeze(-1))
-            # q_next = log_q_previous * q[ind:ind + 1, n_matches:candidate_length]
 
             if b > 0:
 
@@ -497,8 +473,6 @@ def evaluate_posterior(
                 p_new[:, 0] = p_primes[:, current_step_match].clone()
 
                 p_new_sum = p_new.sum(-1, keepdim=True)
-                # # print("check p new sum")
-                # print(p_new_sum)
                 # there is already nan in p_new_sum even before deviding by zero
                 # probably due to underflow or division by zero
                 # if divided by 0, the probabilities will become nan, and leading to strange strings
@@ -515,13 +489,6 @@ def evaluate_posterior(
                 # can't use one_hot to -1 tokens
 
                 q_i = torch.ones(1, new_candidate_length-n_matches).to(logits.device)
-                # q_i = q[ind:ind + 1, torch.arange(n_matches, new_candidate_length),
-                #       new_candidate_input_ids].squeeze(1)
-
-                # # print("check distribution")
-                # print(p[:, torch.arange(hist_length, candidate_length)].topk(10, dim=-1)[0])
-                # print(q[:, torch.arange(hist_length, candidate_length)].topk(10, dim=-1)[0])
-
                 q_previous = torch.roll(q_i, 1, 1)
                 q_previous[:, 0] = log_q_previous[:, current_step_match]
 
@@ -533,62 +500,18 @@ def evaluate_posterior(
                 # p_primes has to be re-normalized after applying zero masks, before applied with p_previous
 
                 p_previous = torch.roll(p_i, 1, 1)
-                # # print(p_previous.shape)
-                # exit()
                 p_previous[:, 0] = log_p_previous[:, current_step_match]
-
-                # there might be underflow
-                # p_next = p_previous.cumprod(1).unsqueeze(-1) * p_primes[:, length:candidate_length-hist_length+length]
-
-                # check probs
-                # tensor([[1.0000, 0.2642, 0.2578, 0.1293]], device='mps:0')
 
                 # p_primes doesn't sum to one, because they are just sub-branches of the full joint distribution tree
                 # i have to normalize them to sum=1 when treating as marginal probabilities, just as when i do the resampling during forward sampling
-
                 # i want to control the joint prob ratio of the preceding draft tokens to be <=1,
                 log_p_previous = torch.exp(torch.log(p_previous).cumsum(1)).unsqueeze(-1)
 
-
-
-                # ratio = log_p_previous / log_q_previous
-                #
-                # previous_max = 1
-                # new_p_previous = torch.ones_like(log_p_previous).to(log_p_previous.device)
-                # for k in range(new_candidate_length - n_matches):
-                #     if ratio[:, k] > previous_max:
-                #         previous_max = ratio[:, k]
-                #
-                #     new_p_previous[:, k] = log_p_previous[:, k] / previous_max
-                #
-                # p_next = new_p_previous * p_new
-
                 p_next = torch.minimum(p_previous.cumprod(-1), q_previous.cumprod(-1)).unsqueeze(-1) * p_new
 
-                # # print("check probs")
-                # print(p_i)
-                # print(p_next.sum(-1))
-
             else:
-                # print("debug approxi")
-                # print(approxi)
-                # do not cap the previous ratio
-                # if approxi:
-                #     # p_i corresponds to marginal probability
-                #     p_i = p[:1, torch.arange(n_matches, candidate_length), new_candidate_input_ids].squeeze(1)
-                #
-                #     p_previous = torch.roll(p_i, 1, 1)
-                #     # # print(p_previous.shape)
-                #     # exit()
-                #     p_previous[:, 0] = 1
-                #     p_next = torch.exp(torch.log(p_previous).cumsum(1)).unsqueeze(-1) * p[:1, :candidate_length]
-                #
                 # # for multidraft
                 q_i = torch.ones(1, new_candidate_length-n_matches).to(logits.device)
-
-                # # print("check distribution")
-                # print(p[:, torch.arange(hist_length, candidate_length)].topk(10, dim=-1)[0])
-                # print(q[:, torch.arange(hist_length, candidate_length)].topk(10, dim=-1)[0])
 
                 q_previous = torch.roll(q_i, 1, 1)
                 q_previous[:, 0] = 1
@@ -606,40 +529,16 @@ def evaluate_posterior(
 
                 # i want to control the joint prob ratio of the preceding draft tokens to be <=1,
                 log_p_previous = torch.exp(torch.log(p_previous).cumsum(1)).unsqueeze(-1)
-
-                # p_next = torch.minimum(log_p_previous, log_q_previous) * p[:, :candidate_length]
-
-                # ratio = log_p_previous / log_q_previous
-                #
-                # previous_max = 1
-                # new_p_previous = torch.ones_like(log_p_previous).to(log_p_previous.device)
-
-                # for k in range(new_candidate_length-n_matches):
-                #     if ratio[:, k] > previous_max:
-                #         previous_max = ratio[:, k]
-                #
-                #     new_p_previous[:, k] = log_p_previous[:, k] / previous_max
-                #
-                # p_next = new_p_previous * p[ind:ind + 1, :new_candidate_length-1]
-
                 p_next = torch.minimum(log_p_previous, log_q_previous) * p[ind:ind + 1, :new_candidate_length-1]
 
-            # # # print("q_next")
-            # # print(q_next)
+
             # be careful with the positions where diffs=0
 
             # calculate in log scale (because multiplication becomes addition in log space) to avoid underflow
 
-            # diffs = p_next - q_next
             diffs = p_next - q_next
 
             # ratio range is expected to be smaller than absolute probability range, since all probabilities are smaller than 1
-            # ratio_next = (p_previous/q_previous).cumprod(1).unsqueeze(-1)*(p[:, :candidate_length]/q[:, :candidate_length])
-
-            # diffs = (1-ratio_next)*q_next
-
-            # log_p_plus = torch.log(1-ratio_next) + log_q_next
-
             p_plus, p_minus = torch.clamp(diffs, min=0), torch.clamp(-diffs, min=0)
 
             # to avoid underflow, try to formulate using r_previous
@@ -659,15 +558,6 @@ def evaluate_posterior(
             # in this case, we have two zero joint probabilities, causing the problem to happen
             p_primes = torch.nan_to_num(p_plus / denominator)
 
-            # # print("check pi and qi")
-            # print(p_i)
-            # print(q_i)
-
-            # # print("check previous prob")
-            # print(p_plus.sum(-1))
-            # print(p_minus.sum(-1))
-            # print(p_primes.sum(-1))
-
             # for recursive backward speculative, i actually have to reset the ratio of already accepted tokens to 1,
 
             # compute the residual probabilities for stepping back
@@ -683,47 +573,17 @@ def evaluate_posterior(
             uniform_rand = torch.rand_like(step_back_probs)
 
             step_back = uniform_rand < step_back_probs
-
-            # # # print("step back")
-            # # print(step_back)
-            #
-            # # print("step back prob")
-            # print(step_back_probs)
-            # # # print("step back")
-            # # print(step_back)
-
             # find the last index of False value in step_back array, i.e., not stepping back
             # could be done by finding the first index of false value in the reversed step_back array
 
-            # # print("check")
-            # print(step_back.shape)
             stop_positions = new_candidate_length - n_matches - 1 - \
                              torch.flip(~step_back, [-1]).max(-1, keepdim=True)[1]
-            # # print("stop positions")
-            # print(stop_positions)
 
             # create the mask for selecting the elements after different stop positions at each row
             select = torch.zeros_like(step_back).to(step_back.device)
 
-            # if clever:
-            #     ratio = p_i / q_i  # (batch, time)
-            #     batch_size, time_steps = ratio.shape
-            #     accept_prob = torch.ones(batch_size, time_steps, device=ratio.device)
-            #     running_prod = torch.ones(batch_size, device=ratio.device)
-            #
-            #     for t in range(time_steps):
-            #         running_prod = running_prod * ratio[:, t]  # normal cumulative prod
-            #         accept_prob[:, t] = torch.minimum(running_prod, torch.ones_like(running_prod))  # cap only for storage
-            #
-            #     # Unsqueeze if needed
-            #     accept_prob = accept_prob.unsqueeze(-1)
-            #
-            #     r_i = torch.rand_like(accept_prob)
-            #     is_accepted = r_i <= accept_prob
-
             # apply cumprod on the ratio instead of the raw probabilities to avoid underflow
             # it has to be updated for multidraft!!!
-
             probability_ratio = (p_i / q_i).cumprod(1).unsqueeze(-1)
 
             # When probability_ratio > 1 (i.e. q_i(x) < p_i(x), or "assistant probability of the candidate token is smaller
@@ -733,23 +593,11 @@ def evaluate_posterior(
             r_i = torch.rand_like(probability_ratio)
             is_accepted = r_i <= probability_ratio
 
-            # # print("prob ratio")
-            # print(probability_ratio)
-            # # print("accept before")
-            # print(is_accepted)
-            # # # print("step back")
-            # # print(step_back)
-
             # only decide to accept or not at the last position based on the joint probability ratio
             # assign 0 to all positions when the full draft is rejected, otherwise assign 1 to the rest of the positions
             select[torch.arange(p_primes.shape[0]), stop_positions] = ~is_accepted[:, -1:]
             is_accepted = 1 - torch.cumsum(select, dim=-1)
 
-            # # # print("accept after")
-            # # print(is_accepted)
-
-            # # # print("final accepted")
-            # # print(is_accepted)
             #### assume batch_size=1 for the current implementation
             current_step_match = is_accepted.sum().item()
 
@@ -758,19 +606,11 @@ def evaluate_posterior(
             if n_matches == candidate_length:
                 break
 
-        # print("if 3")
         # Next token selection: if there is a rejection, adjust the distribution from the main model before sampling.
         gamma = new_candidate_length
-        # # print("check gamma")
-        # print(gamma)
-        # # print("check p")
-        # print(p.shape)
-        # print(candidate_length)
         p_n_plus_1 = p[ind:ind + 1, new_candidate_length-1, :]
         if n_matches < gamma:
             # then we don't have a bonus token, and start the resample from the step where we don't step back, i.e., n_matches+1
-            # # print("check p_prime")
-            # print(p_primes)
             # don't use in_place operation! because slicing is not creating a new tensor
             p_prime = p_primes[:, current_step_match]
 
@@ -783,19 +623,8 @@ def evaluate_posterior(
                                                           num_classes=logits.shape[-1]).float()
             else:
                 p_prime = p_prime.div(p_prime.sum())
-
-            # p_prime.sum() could be zero
-
-            # # # print("if")
-            # # print(p_primes.shape)
-            # # print(n_matches)
-            # print(p_prime.shape)
         else:
             p_prime = p_n_plus_1
-            # # # print("else")
-            # print(p_prime.shape)
-
-
 
         return ind, n_matches-1, p_prime.squeeze()
 

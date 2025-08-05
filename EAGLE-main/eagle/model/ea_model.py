@@ -204,17 +204,22 @@ class EaModel(nn.Module):
             hsd=False
 
     ):
+        return_info = {'processor_time':0, 'kv_time':0,'reset_tree_time':0, 
+                       'tree_time':[], 'eval_time':[], 'update_time':[], 'accept_length':[], 'draft_length':[]}
         if is_llama3:
             stop_token_id = self.tokenizer.convert_tokens_to_ids("<|eot_id|>")
 
-
+        start_time = time.perf_counter()
         if temperature > 1e-5:
             logits_processor = prepare_logits_processor(temperature=temperature, top_p=top_p, top_k=top_k)
         else:
             logits_processor = None
         # assert input_ids.shape[0] == 1, "Only support batch size 1 for now!!"
         # Avoid modifying the input_ids in-place
+        end_time = time.perf_counter()
+        return_info['processor_time'] = end_time - start_time
 
+        start_time = time.perf_counter()
         padding = (torch.zeros(1, 1, dtype=torch.long) - 1).to(input_ids.device)
         input_ids = input_ids.clone()
         self.ea_layer.reset_kv()
@@ -256,15 +261,32 @@ Compose an engaging travel blog post about a recent trip to Hawaii, highlighting
 
         # print(self.tokenizer.decode(input_ids[0]))
         # exit()
+        end_time = time.perf_counter()
+        return_info['kv_time'] = end_time - start_time
+
+        start_time = time.perf_counter()
+
         reset_tree_mode(self)
         # prefill
         draft_tokens, retrieve_indices, tree_mask, tree_position_ids, logits, hidden_state, sample_token = initialize_tree(
             input_ids, self, past_key_values, logits_processor
         )
+        end_time = time.perf_counter()
+        return_info['reset_tree_time'] = end_time - start_time
+        
+
         new_token = 0
         max_length = max_length - self.ea_layer.total_tokens - 10
+
+        per_length_tree_time = []
+        per_length_eval_time = []
+        per_length_update_time = []
+        per_length_accept_length = []
+        per_length_draft_length = []
         for idx in range(max_length):
             # with Timer("all"):
+
+            start_time = time.perf_counter()
             self.base_model.model.tree_mask = tree_mask
 
             draft_tokens = draft_tokens.to(input_ids.device)
@@ -279,14 +301,28 @@ Compose an engaging travel blog post about a recent trip to Hawaii, highlighting
             )
             # retrieve_indices=tree_buffers["retrieve_indices"]
             # logits = logits[0, retrieve_indices]
+            end_time = time.perf_counter()
+            per_length_tree_time.append(end_time - start_time)
+
+
+            
+
             draft_tokens = torch.cat((draft_tokens, padding), dim=1)
             candidates = draft_tokens[0, retrieve_indices]
+            per_length_draft_length.append(candidates.shape[1])
+
+
             # verification
+            start_time = time.perf_counter()
             best_candidate, accept_length, sample_p = evaluate_posterior(
                 logits, candidates, logits_processor, hsd=hsd
             )
+            end_time = time.perf_counter()
+            per_length_eval_time.append(end_time - start_time)
+            per_length_accept_length.append(accept_length)
             # print(accept_length)
             # Adjusting the input sequence, draft model forward
+            start_time = time.perf_counter()
             input_ids, draft_tokens, retrieve_indices, tree_mask, tree_position_ids, new_token, hidden_state, sample_token = update_inference_inputs(
                 input_ids,
                 candidates,
@@ -301,6 +337,8 @@ Compose an engaging travel blog post about a recent trip to Hawaii, highlighting
                 hidden_state_new,
                 sample_p
             )
+            end_time = time.perf_counter()
+            per_length_update_time.append(end_time - start_time)
 
             # print("input string")
             # print(self.tokenizer.decode(input_ids[0][-new_token-10:]))
@@ -316,10 +354,16 @@ Compose an engaging travel blog post about a recent trip to Hawaii, highlighting
                 break
             if input_ids.shape[1] > max_length:
                 break
+        return_info['tree_time'] = per_length_tree_time
+        return_info['eval_time'] = per_length_eval_time
+        return_info['update_time'] = per_length_update_time
+        return_info['accept_length'] = per_length_accept_length
+        return_info['draft_length'] = per_length_draft_length
+
         if not log:
             return input_ids
         else:
-            return input_ids, new_token, idx
+            return input_ids, new_token, idx, return_info
 
     @torch.no_grad()
     def naivegenerate(
@@ -334,17 +378,21 @@ Compose an engaging travel blog post about a recent trip to Hawaii, highlighting
             is_llama3=False,
 
     ):
+        return_info = {'processor_time':0, 'kv_time':0,'base_model_time':0, 'length_time':[]}
         if is_llama3:
             stop_token_id = self.tokenizer.convert_tokens_to_ids("<|eot_id|>")
 
-
+        start_time = time.perf_counter()
         if temperature > 1e-5:
             logits_processor = prepare_logits_processor(temperature=temperature, top_p=top_p, top_k=top_k)
         else:
             logits_processor = None
         # assert input_ids.shape[0] == 1, "Only support batch size 1 for now!!"
         # Avoid modifying the input_ids in-place
+        end_time = time.perf_counter()
+        return_info['processor_time'] = end_time - start_time
 
+        start_time = time.perf_counter()
         padding = (torch.zeros(1, 1, dtype=torch.long) - 1).to(input_ids.device)
         input_ids = input_ids.clone()
         self.ea_layer.reset_kv()
@@ -367,11 +415,23 @@ Compose an engaging travel blog post about a recent trip to Hawaii, highlighting
             self.current_length_data = current_length_data
 
         input_len = input_ids.shape[1]
+
+        end_time = time.perf_counter()
+        return_info['kv_time'] = end_time - start_time
+
+        start_time = time.perf_counter()
+
         reset_tree_mode(self)
         outputs = self.base_model(input_ids, past_key_values=past_key_values, use_cache=True)
+        end_time = time.perf_counter()
+        return_info['base_model_time'] = end_time - start_time
+        
         new_token = 0
         max_length = max_length - self.ea_layer.total_tokens - 10
+
+        per_length_time = []
         for idx in range(max_length):
+            start_time = time.perf_counter()
             if logits_processor is not None:
                 logits = outputs.logits[:, -1]
                 logits = logits_processor(None, logits)
@@ -393,10 +453,13 @@ Compose an engaging travel blog post about a recent trip to Hawaii, highlighting
                 break
             if input_ids.shape[1] > max_length:
                 break
+            end_time = time.perf_counter()
+            per_length_time.append(end_time - start_time)
+        return_info['length_time'] = per_length_time
         if not log:
             return input_ids
         else:
-            return input_ids, new_token, idx
+            return input_ids, new_token, idx, return_info
 
     @torch.no_grad()
     def ea_generate(
