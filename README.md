@@ -18,12 +18,12 @@ This script runs a comparison between **EAGLE3** decoding and **our HSD (Hierarc
 
 Baseline EAGLE3 (no HSD):
 ```bash
-python -m eagle.evaluation.gen_ea_answer_llama3chat   --ea-model-path yuhuili/EAGLE3-LLaMA3.1-Instruct-8B   --base-model-path meta-llama/Llama-3.1-8B-Instruct   --use_eagle3   --temperature 1.0
+python -m eagle.evaluation.gen_ea_answer_llama3chat   --ea-model-path yuhuili/EAGLE3-LLaMA3.1-Instruct-8B   --base-model-path meta-llama/Llama-3.1-8B-Instruct --folder_id test1  --use_eagle3   --temperature 1.0
 ```
 
 EAGLE3 + **HSD**:
 ```bash
-python -m eagle.evaluation.gen_ea_answer_llama3chat   --ea-model-path yuhuili/EAGLE3-LLaMA3.1-Instruct-8B   --base-model-path meta-llama/Llama-3.1-8B-Instruct   --use_eagle3   --hsd   --temperature 1.0
+python -m eagle.evaluation.gen_ea_answer_llama3chat   --ea-model-path yuhuili/EAGLE3-LLaMA3.1-Instruct-8B   --base-model-path meta-llama/Llama-3.1-8B-Instruct  --folder_id test1  --use_eagle3   --hsd   --temperature 1.0
 ```
 ---
 
@@ -55,8 +55,13 @@ python -m eagle.evaluation.gen_ea_answer_llama3chat   --ea-model-path yuhuili/EA
 ### Folder structure
 
 ```
-repo_root/
+EAGLE-main/
 ├─ eagle/
+   └─ evaluation/
+      └─ gen_ea_answer_llama3chat.py
+   └─ data/
+      └─ mt_bench/
+          └─ question.jsonl
 └─ mt_bench/
    └─ <folder_id>/
       ├─ <model_id>_ea.jsonl
