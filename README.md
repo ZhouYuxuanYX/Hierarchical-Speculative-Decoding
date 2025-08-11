@@ -1,6 +1,17 @@
 # Hierarchical-Speculative-Decoding
 Hierarchical Speculative Decoding is the state-of-the-art lossless verification algorithm.
 
+## HSD Running under Chain-of-Thought
+Baseline (no HSD):
+```bash
+python3 eval_speculative_decoding_llm.py --speculative --naive
+```
+Ours (with HSD):
+```bash
+python3 eval_speculative_decoding_llm.py --speculative --HSD
+```
+
+
 ## HSD vs. EAGLE3 — MT-Bench Generation
 
 This script runs a comparison between **EAGLE3** decoding and **our HSD (Hierarchical Speculative Decoding)** on MT-Bench–style prompts. In typical use, you only need to vary **`--temperature`**, **`--top_p`** (see note), and **`--hsd`**.
