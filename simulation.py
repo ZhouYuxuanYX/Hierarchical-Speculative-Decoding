@@ -61,7 +61,7 @@ def HSD(candidate_input_ids, candidate_logits, candidate_length, new_logits):
     step_back = uniform_rand < step_back_probs
 
     if step_back.all():
-        stop_position=0
+        stop_positions=0
     else:
         stop_positions = candidate_length - 1 - torch.flip(~step_back, [-1]).max(-1, keepdim=True)[1]
 
