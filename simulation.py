@@ -14,6 +14,7 @@ Mb_probs = np.array([1/3, 2/3])
 
 # Method 1: HSD (ours)
 def HSD(candidate_input_ids, candidate_logits, candidate_length, new_logits):
+    gamma = candidate_logits.shape[1]
 
     q = candidate_logits
     p = new_logits
@@ -38,12 +39,12 @@ def HSD(candidate_input_ids, candidate_logits, candidate_length, new_logits):
     ratio = joint_p_previous / joint_q_previous
 
     previous_max = 1
-    new_p_previous = torch.ones_like(log_p_previous).to(log_p_previous.device)
+    new_p_previous = torch.ones_like(joint_p_previous).to(joint_p_previous.device)
     for k in range(candidate_length):
         if ratio[:, k] > previous_max:
             previous_max = ratio[:, k]
 
-        new_p_previous[:, k] = log_p_previous[:, k] / previous_max
+        new_p_previous[:, k] = joint_p_previous[:, k] / previous_max
 
     p_next =  new_p_previous * p[:, :candidate_length]
 
@@ -234,7 +235,7 @@ bins = np.arange(draft_length + 2) - 0.5
 plt.hist(matches_1, bins=bins, alpha=0.6, label="Method 1: Backward", color="skyblue", edgecolor="black", linewidth=1.2)
 plt.hist(matches_2, bins=bins, alpha=0.6, label="Method 2: Blockwise", color="salmon", edgecolor="black", linewidth=1.2)
 plt.hist(matches_3, bins=bins, alpha=0.6, label="Method 3: Tokenwise", color="grey", edgecolor="black", linewidth=1.2)
-plt.hist(matches_4, bins=bins, alpha=0.6, label="Method 4: Backward Old", color="orange", edgecolor="black", linewidth=1.2)
+
 
 plt.xlabel("Accepted Token Length", fontsize=12)
 plt.ylabel("Frequency", fontsize=12)
@@ -263,7 +264,6 @@ def plot_ccdf(data, label, color):
 plot_ccdf(matches_1, "Method 1: HSD (ours)", "skyblue")
 plot_ccdf(matches_2, "Method 2: Blockwise", "salmon")
 plot_ccdf(matches_3, "Method 3: Tokenwise", "grey")
-# plot_ccdf(matches_4, "Method 4: Backward old", "orange")
 
 plt.xlabel(r"Accepted Length $\tau$", fontsize=12)
 plt.ylabel(r"$P(t > \tau)$", fontsize=12)
