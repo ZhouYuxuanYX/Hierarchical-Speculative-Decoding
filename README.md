@@ -1,12 +1,12 @@
 # Hierarchical-Speculative-Decoding
-Hierarchical Speculative Decoding is the state-of-the-art lossless verification algorithm.
+Hierarchical Speculative Decoding is the state-of-the-art verification algorithm.
 
 ## HSD Running under Chain-of-Thought
-Baseline (no HSD):
+Tokenwise (Baseline):
 ```bash
-python3 eval_speculative_decoding_llm.py --speculative --naive
+python3 eval_speculative_decoding_llm.py --speculative 
 ```
-Ours (with HSD):
+HSD (Ours):
 ```bash
 python3 eval_speculative_decoding_llm.py --speculative --HSD
 ```
