@@ -73,6 +73,8 @@ python compute_speculative_stats.py
 
 Table 1. Comparison of GSM8K performance of Tokenwise verification and HSD (ours) using Qwen2.5-0.5B as draft model.
 
+[1] Sun, Ziteng, et al. "Block verification accelerates speculative decoding." arXiv preprint arXiv:2403.10444 (2024).
+
 
 
 
