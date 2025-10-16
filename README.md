@@ -2,14 +2,29 @@
 Hierarchical Speculative Decoding is the state-of-the-art verification algorithm.
 
 ## HSD Running under Chain-of-Thought
-Tokenwise (Baseline):
+
 ```bash
-python3 eval_speculative_decoding_llm.py --speculative 
+cd chain-of-thought-hub/gsm8k
 ```
-HSD (Ours):
+
+Then run the corresponding sh files:
+- Tokenwise
 ```bash
-python3 eval_speculative_decoding_llm.py --speculative --HSD
+evaluate_speculative_qwen.sh
 ```
+- Blockwise
+```bash
+evaluate_speculative_qwen_blockwise.sh
+```
+- NaiveHSD (ours)
+```bash
+eval_speculative_qwen_backward.sh
+```
+- HSD (ours)
+```bash
+evaluate_speculative_qwen_backward_clever.sh
+```
+
 
 ## Performance Comparison Across Model Sizes and Methods
 
@@ -17,6 +32,10 @@ python3 eval_speculative_decoding_llm.py --speculative --HSD
 |--------|--------|-----|-----|-----|
 | GSM8K (Accuracy) | Tokenwise | 0.8213 | 0.8213 | 0.8327 |
 | GSM8K (Accuracy) | HSD | 0.8517 | 0.8479 | 0.8327 |
+Table 1. Comparison of GSM8K performance of Tokenwise verification and HSD (ours) using Qwen2.5-0.5B as draft model.
+
+
+
 
 
 
