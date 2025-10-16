@@ -7,9 +7,7 @@ Hierarchical Speculative Decoding is the state-of-the-art verification algorithm
 Let \( p(\cdot) \) and \( q(\cdot) \) denote the target and draft distributions, respectively.  
 Following [1], we define two context-independent distributions as a toy example:
 
-\[
-p(A) = \frac{1}{3}, \quad p(B) = \frac{2}{3}, \quad q(A) = \frac{2}{3}, \quad q(B) = \frac{1}{3}.
-\]
+`p(A) = 1/3,  p(B) = 2/3,  q(A) = 2/3,  q(B) = 1/3`
 
 Then we can run simulation with this toy example using the following command:
 ```python
