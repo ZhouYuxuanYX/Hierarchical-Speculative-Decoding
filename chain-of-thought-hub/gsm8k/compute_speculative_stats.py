@@ -28,31 +28,18 @@ def safe_orjson_load(mm_bytes: bytes):
 
 
 start = time.time()
+# tokenwise
 with open(f"{models}naive_gamma_{gamma}_total_counts.json", "rb") as f:
     mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
     counts_naive = safe_orjson_load(mm[:])   # ✅ fixed
     mm.close()
-#
-# with open(f"{models}backward_gamma_10_total_counts.json", "rb") as f:
-#     mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-#     counts_backward = safe_orjson_load(mm[:])   # ✅ fixed
-#     mm.close()
-#
-# with open(f"{models}backward_recursive_gamma_10_total_counts.json", "rb") as f:
-#     mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-#     counts_backward_recursive = safe_orjson_load(mm[:])   # ✅ fixed
-#     mm.close()
 
+# hsd
 with open(f"{models}backward_clever_gamma_{gamma}_total_counts.json", "rb") as f:
     mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
     counts_backward_clever = safe_orjson_load(mm[:])   # ✅ fixed
     mm.close()
-#
-# with open(f"{models}backward_clever_approxi_gamma_10_total_counts.json", "rb") as f:
-#     mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-#     counts_backward_clever_approxi = safe_orjson_load(mm[:])   # ✅ fixed
-#     mm.close()
-
+# blockwise
 with open(f"{models}blockwise_gamma_{gamma}_total_counts.json", "rb") as f:
     mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
     counts_blockwise = safe_orjson_load(mm[:])   # ✅ fixed
@@ -64,15 +51,12 @@ print(end - start)
 
 counts = [
     counts_naive,
-    # counts_backward, counts_backward_recursive,
     counts_backward_clever,
-    # counts_backward_clever_approxi,
     counts_blockwise,
 ]
 
 
 draft_eval = []
-target_eval = []
 total_step = []
 sample_length = []
 times = []
@@ -115,14 +99,13 @@ for count in counts:
         time_ += float(count["time"][n])*sample_list[draft_list == gamma].sum()/sample_list.sum()
 
     draft_eval.append((draft / len_))
-    target_eval.append((target / len_))
     total_step.append((step / len_))
     sample_length.append((sample / len_))
     times.append(time_)
     lens.append(token_)
 
-print("efficiency")
-print(np.array(lens) / np.array(times))
+# print("efficiency")
+# print(np.array(lens) / np.array(times))
 
 draft_eval = np.array(draft_eval)
 target_eval = np.array(target_eval)
@@ -137,8 +120,8 @@ width = 0.3  # Width of the bars
 # Create plot
 fig, ax = plt.subplots()
 # bar1 = ax.bar(x - width, [a.sum() for a in times], width, label='List 1')
-bar2 = ax.bar(x, [a.sum() for a in target_eval], width, label="List 2")
-bar3 = ax.bar(x + width, [a.sum() for a in sample_length], width, label="List 3")
+bar2 = ax.bar(x, [lens[i]/times[i]*gamma for i in range(len(counts))], width, label="Decoding Speed")
+bar3 = ax.bar(x + width, [a.sum() for a in sample_length], width, label="Block Efficiency")
 
 # Add labels, title, and legend
 ax.set_ylabel("Scores")
