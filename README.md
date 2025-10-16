@@ -1,15 +1,29 @@
 # Hierarchical-Speculative-Decoding
 Hierarchical Speculative Decoding is the state-of-the-art verification algorithm.
 
-## Requirements
 
+## Compare the Expected Number of Accepted Tokens with a Toy Example 
+
+Let \( p(\cdot) \) and \( q(\cdot) \) denote the target and draft distributions, respectively.  
+Following [1], we define two context-independent distributions as a toy example:
+
+\[
+p(A) = \frac{1}{3}, \quad p(B) = \frac{2}{3}, \quad q(A) = \frac{2}{3}, \quad q(B) = \frac{1}{3}.
+\]
+
+Then we can run simulation with this toy example using the following command:
+```python
+python simulaiton.py
+```
+
+## Reproduce the Experiment Results on GSM8K
+
+### Requirements
 Please install `python=3.10` and `transformers=4.46.3`, then copy the provided files under the `transformers` directory to the path:
     
 ```
 anaconda3/envs/your_environment_name/lib/python3.10/site-packages/transformers/
 ``` 
-
-## Reproduce the Experiment Results on GSM8K
 
 ```bash
 cd chain-of-thought-hub/gsm8k
