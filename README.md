@@ -18,19 +18,19 @@ cd chain-of-thought-hub/gsm8k
 Then run the corresponding sh files:
 - Tokenwise
 ```bash
-evaluate_speculative_qwen.sh
+bash evaluate_speculative_qwen.sh
 ```
 - Blockwise
 ```bash
-evaluate_speculative_qwen_blockwise.sh
+bash evaluate_speculative_qwen_blockwise.sh
 ```
 - NaiveHSD (ours)
 ```bash
-eval_speculative_qwen_backward.sh
+bash eval_speculative_qwen_backward.sh
 ```
 - HSD (ours)
 ```bash
-evaluate_speculative_qwen_backward_clever.sh
+bash evaluate_speculative_qwen_backward_clever.sh
 ```
 
 Finally, evaluate Block Efficiency and Decoding Speed by running the following command:
