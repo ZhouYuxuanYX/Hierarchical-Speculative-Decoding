@@ -9,7 +9,7 @@ Please install `python=3.10` and `transformers=4.46.3`, then copy the provided f
 anaconda3/envs/your_environment_name/lib/python3.10/site-packages/transformers/
 ``` 
 
-## HSD Running under Chain-of-Thought
+## Reproduce the Experiment Results on GSM8K
 
 ```bash
 cd chain-of-thought-hub/gsm8k
