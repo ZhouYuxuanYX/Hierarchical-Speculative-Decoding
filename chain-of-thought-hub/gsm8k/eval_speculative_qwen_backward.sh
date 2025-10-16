@@ -1,5 +1,5 @@
 #!bin/bash
-cd /home/c02yuzh/CISPA-projects/rectified_softmax_ml-2023/chain-of-thought-hub-main/gsm8k
+cd chain-of-thought-hub-main/gsm8k
 echo "speculative"
 eval "$(/root/anaconda3/bin/conda shell.bash hook)"
 source ~/.bashrc
