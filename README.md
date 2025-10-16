@@ -1,6 +1,14 @@
 # Hierarchical-Speculative-Decoding
 Hierarchical Speculative Decoding is the state-of-the-art verification algorithm.
 
+## Requirements
+
+Please install python=3.10 and transformers=4.46.3, then copy the provided files under the huggingface directory to the path:
+    
+```
+anaconda3/envs/your_environment_name/lib/python3.10/site-packages/transformers/
+``` 
+
 ## HSD Running under Chain-of-Thought
 
 ```bash
