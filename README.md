@@ -33,6 +33,12 @@ eval_speculative_qwen_backward.sh
 evaluate_speculative_qwen_backward_clever.sh
 ```
 
+Finally, evaluate Block Efficiency and Decoding Speed by running the following command:
+
+```bash
+python compute_speculative_stats.py
+```
+
 
 ## Performance Comparison Across Model Sizes and Methods
 
