@@ -15,7 +15,7 @@ anaconda3/envs/your_environment_name/lib/python3.10/site-packages/transformers/
 cd chain-of-thought-hub/gsm8k
 ```
 ### Singledraft Verification
-Please run the corresponding sh files:
+Please run the corresponding shell files:
 
 - Tokenwise
 ```bash
@@ -34,7 +34,7 @@ bash eval_speculative_qwen_backward.sh
 bash evaluate_speculative_qwen_backward_clever.sh
 ```
 ### Multidraft Verification with Recursive Reject Sampling
-Please run the corresponding sh files:
+Please run the corresponding shell files:
 
 - Tokenwise
 ```bash
