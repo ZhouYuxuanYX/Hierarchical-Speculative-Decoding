@@ -14,8 +14,9 @@ anaconda3/envs/your_environment_name/lib/python3.10/site-packages/transformers/
 ```bash
 cd chain-of-thought-hub/gsm8k
 ```
+### Singledraft Verification
+Please run the corresponding sh files:
 
-Then run the corresponding sh files:
 - Tokenwise
 ```bash
 bash evaluate_speculative_qwen.sh
@@ -31,6 +32,17 @@ bash eval_speculative_qwen_backward.sh
 - HSD (ours)
 ```bash
 bash evaluate_speculative_qwen_backward_clever.sh
+```
+### Multidraft Verification with Recursive Reject Sampling
+Please run the corresponding sh files:
+
+- Tokenwise
+```bash
+bash evaluate_speculative_qwen_multidraft_11.sh
+```
+- HSD (ours)
+```bash
+bash evaluate_speculative_qwen_backward_clever_multidraft_11.sh
 ```
 
 Finally, evaluate Block Efficiency and Decoding Speed by running the following command:
