@@ -9,8 +9,9 @@ trials = 10000
 vocab_size = 2
 
 # Probability distributions
-Ms_probs = np.array([2/3, 1/3])
-Mb_probs = np.array([1/3, 2/3])
+Ms_probs = np.array([2 / 3, 1 / 3])
+Mb_probs = np.array([1 / 3, 2 / 3])
+
 
 # Method 1: HSD (ours)
 def HSD(candidate_input_ids, candidate_logits, candidate_length, new_logits):
@@ -35,7 +36,7 @@ def HSD(candidate_input_ids, candidate_logits, candidate_length, new_logits):
     p_previous = torch.roll(p_i, 1, 1)
     p_previous[:, 0] = 1
     joint_p_previous = torch.exp(torch.log(p_previous).cumsum(1)).unsqueeze(-1)
-    
+
     ratio = joint_p_previous / joint_q_previous
 
     previous_max = 1
@@ -46,13 +47,15 @@ def HSD(candidate_input_ids, candidate_logits, candidate_length, new_logits):
 
         new_p_previous[:, k] = joint_p_previous[:, k] / previous_max
 
-    p_next =  new_p_previous * p[:, :candidate_length]
+    p_next = new_p_previous * p[:, :candidate_length]
 
     diffs = p_next - q_next
 
     p_plus, p_minus = torch.clamp(diffs, min=0), torch.clamp(-diffs, min=0)
 
-    denominator = torch.maximum(p_plus.sum(dim=-1, keepdim=True), p_minus.sum(dim=-1, keepdim=True))
+    denominator = torch.maximum(
+        p_plus.sum(dim=-1, keepdim=True), p_minus.sum(dim=-1, keepdim=True)
+    )
     p_primes = p_plus / denominator
     step_back_probs = 1 - p_primes.sum(dim=-1)
 
@@ -62,9 +65,11 @@ def HSD(candidate_input_ids, candidate_logits, candidate_length, new_logits):
     step_back = uniform_rand < step_back_probs
 
     if step_back.all():
-        stop_positions=0
+        stop_positions = 0
     else:
-        stop_positions = candidate_length - 1 - torch.flip(~step_back, [-1]).max(-1, keepdim=True)[1]
+        stop_positions = (
+            candidate_length - 1 - torch.flip(~step_back, [-1]).max(-1, keepdim=True)[1]
+        )
 
     select = torch.zeros_like(step_back).to(step_back.device)
 
@@ -73,13 +78,11 @@ def HSD(candidate_input_ids, candidate_logits, candidate_length, new_logits):
     r_i = torch.rand_like(probability_ratio)
     is_accepted = r_i <= probability_ratio
 
-
     # only decide to accept or not at the last position based on the joint probability ratio
     # assign 0 to all positions when the full draft is rejected, otherwise assign 1 to the rest of the positions
     select[torch.arange(p_primes.shape[0]), stop_positions] = ~is_accepted[:, -1:]
     is_accepted = 1 - torch.cumsum(select, dim=-1)
 
-    #### assume batch_size=1 for the current implementation
     n_matches = is_accepted.sum().item()
 
     p_n_plus_1 = p[:, candidate_length, :]
@@ -101,13 +104,11 @@ def HSD(candidate_input_ids, candidate_logits, candidate_length, new_logits):
 
     return valid_tokens, n_matches
 
+
 # Method 2: Blockwise Verification
 def blockwise(candidate_input_ids, candidate_logits, candidate_length, new_logits):
     q = candidate_logits
-    q = F.pad(q, pad=(0, 0, 0, 1), mode='constant', value=0)
-
-    # print("debug")
-    # print(q[:, -1].sum())
+    q = F.pad(q, pad=(0, 0, 0, 1), mode="constant", value=0)
 
     new_candidate_input_ids = candidate_input_ids[:, -candidate_length:]
     token_sequence = []  # Will include the token sequence we return
@@ -122,48 +123,58 @@ def blockwise(candidate_input_ids, candidate_logits, candidate_length, new_logit
 
     reject_probs = []
     for token_index in range(candidate_length + 1):
-
         # Unnormalized residual probability
-        sampling_weights = torch.maximum(torch.zeros_like(p[:, token_index]),
-                                         p[:, token_index] * accept_probability - q[:, token_index])
+        sampling_weights = torch.maximum(
+            torch.zeros_like(p[:, token_index]),
+            p[:, token_index] * accept_probability - q[:, token_index],
+        )
         # unnormalized reject probability
-        reject = torch.tensor([1 - accept_probability])[None, :].to(sampling_weights.device)
-
-        # print(weights)
-        # print(weights.sum())
+        reject = torch.tensor([1 - accept_probability])[None, :].to(
+            sampling_weights.device
+        )
 
         if token_index < candidate_length:
             weights = torch.cat([sampling_weights, reject], dim=-1)
             if weights.sum().item() == 0:
                 # this means always accept the previous token, same effect as if chosen_token.item() < vocab_size in the other case
-                valid_tokens = new_candidate_input_ids[:, :token_index + 1]
+                valid_tokens = new_candidate_input_ids[:, : token_index + 1]
                 n_matches = token_index + 1
             else:
                 weights = weights / weights.sum()
 
-                chosen_token = torch.multinomial(weights, num_samples=1).squeeze(1)[None, :]
+                chosen_token = torch.multinomial(weights, num_samples=1).squeeze(1)[
+                    None, :
+                ]
 
                 if chosen_token.item() < vocab_size:
-                    valid_tokens = torch.cat([new_candidate_input_ids[:, :token_index], chosen_token], dim=-1)
+                    valid_tokens = torch.cat(
+                        [new_candidate_input_ids[:, :token_index], chosen_token], dim=-1
+                    )
                     n_matches = token_index
 
             reject_probs.append(weights[0, -1].cpu().item())
         else:
-            # h_gamma = p_gamma
             u_gamma = torch.rand(1)
             is_accepted = u_gamma >= reject.cpu()
 
             if is_accepted:
-                chosen_token = torch.multinomial(p[:, token_index], num_samples=1).squeeze(1)[None, :]
-                valid_tokens = torch.cat([new_candidate_input_ids[:, :token_index], chosen_token], dim=-1)
+                chosen_token = torch.multinomial(
+                    p[:, token_index], num_samples=1
+                ).squeeze(1)[None, :]
+                valid_tokens = torch.cat(
+                    [new_candidate_input_ids[:, :token_index], chosen_token], dim=-1
+                )
                 n_matches = token_index
             reject_probs.append(reject[0, 0].cpu().item())
 
         # no probability ratio for the bonus token
         if token_index < candidate_length:
-            accept_probability = min(1, probability_ratio[token_index] * accept_probability)
+            accept_probability = min(
+                1, probability_ratio[token_index] * accept_probability
+            )
 
     return valid_tokens, n_matches
+
 
 # Method 3: Tokenwise Verification
 def tokenwise(candidate_input_ids, candidate_logits, candidate_length, new_logits):
@@ -205,6 +216,7 @@ def tokenwise(candidate_input_ids, candidate_logits, candidate_length, new_logit
 
     return valid_tokens, n_matches
 
+
 # Simulation runner
 def simulate_spec_sampling(method_func):
     match_lengths = []
@@ -215,11 +227,14 @@ def simulate_spec_sampling(method_func):
         candidate_probs = np.tile(Ms_probs, (draft_length, 1))
         candidate_probs = torch.tensor(candidate_probs).unsqueeze(0)
 
-        new_probs = np.tile(Mb_probs, (draft_length+1, 1))
+        new_probs = np.tile(Mb_probs, (draft_length + 1, 1))
         new_probs = torch.tensor(new_probs).unsqueeze(0)
-        _, n_matches = method_func(candidate_tokens, candidate_probs, draft_length, new_probs)
+        _, n_matches = method_func(
+            candidate_tokens, candidate_probs, draft_length, new_probs
+        )
         match_lengths.append(n_matches)
     return match_lengths
+
 
 # Run both simulations
 matches_1 = simulate_spec_sampling(HSD)
@@ -227,14 +242,39 @@ matches_2 = simulate_spec_sampling(blockwise)
 matches_3 = simulate_spec_sampling(tokenwise)
 
 import seaborn as sns
+
 sns.set(style="whitegrid")
 
 plt.figure(figsize=(8, 4.5))
 bins = np.arange(draft_length + 2) - 0.5
 
-plt.hist(matches_1, bins=bins, alpha=0.6, label="Method 1: Backward", color="skyblue", edgecolor="black", linewidth=1.2)
-plt.hist(matches_2, bins=bins, alpha=0.6, label="Method 2: Blockwise", color="salmon", edgecolor="black", linewidth=1.2)
-plt.hist(matches_3, bins=bins, alpha=0.6, label="Method 3: Tokenwise", color="grey", edgecolor="black", linewidth=1.2)
+plt.hist(
+    matches_1,
+    bins=bins,
+    alpha=0.6,
+    label="Method 1: Backward",
+    color="skyblue",
+    edgecolor="black",
+    linewidth=1.2,
+)
+plt.hist(
+    matches_2,
+    bins=bins,
+    alpha=0.6,
+    label="Method 2: Blockwise",
+    color="salmon",
+    edgecolor="black",
+    linewidth=1.2,
+)
+plt.hist(
+    matches_3,
+    bins=bins,
+    alpha=0.6,
+    label="Method 3: Tokenwise",
+    color="grey",
+    edgecolor="black",
+    linewidth=1.2,
+)
 
 
 plt.xlabel("Accepted Token Length", fontsize=12)
@@ -246,20 +286,21 @@ plt.legend(fontsize=10)
 
 # Clean up spines
 ax = plt.gca()
-ax.spines['right'].set_visible(False)
-ax.spines['top'].set_visible(False)
+ax.spines["right"].set_visible(False)
+ax.spines["top"].set_visible(False)
 
 plt.tight_layout()
 plt.savefig("refined_histogram.png", dpi=300)
 
-# plt.show()
 
 plt.figure(figsize=(8, 4.5))
+
 
 def plot_ccdf(data, label, color):
     sorted_data = np.sort(data)
     ccdf = 1.0 - np.arange(1, len(sorted_data) + 1) / len(sorted_data)
-    plt.step(sorted_data, ccdf, where='post', label=label, color=color, linewidth=2)
+    plt.step(sorted_data, ccdf, where="post", label=label, color=color, linewidth=2)
+
 
 plot_ccdf(matches_1, "Method 1: HSD (ours)", "skyblue")
 plot_ccdf(matches_2, "Method 2: Blockwise", "salmon")
@@ -274,10 +315,9 @@ plt.legend(fontsize=10)
 
 # Clean up spines
 ax = plt.gca()
-ax.spines['right'].set_visible(False)
-ax.spines['top'].set_visible(False)
+ax.spines["right"].set_visible(False)
+ax.spines["top"].set_visible(False)
 
 plt.grid(True, linestyle="--", alpha=0.5)
 plt.tight_layout()
 plt.savefig("refined_ccdf.png", dpi=300)
-
