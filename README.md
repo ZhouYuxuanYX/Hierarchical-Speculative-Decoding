@@ -4,32 +4,24 @@ Hierarchical Speculative Decoding is the state-of-the-art lossless verification 
 
 ## Table of Contents
 
-- [Key Innovation](#key-innovation)
-- [Theoretical Guarantee](#theoretical-guarantee)
-- [Toy Example Simulation](#compare-the-expected-number-of-accepted-tokens-with-a-toy-example)
-- [GSM8K Experiments](#reproduce-experiment-results-on-gsm8k)
-- [Human-Eval Results](#human-eval-results)
-- [MMLU Results](#mmlu-results)
-- [EAGLE Integration](#eagle-integration)
-- [Ablation Studies](#ablation-studies)
-- [Scaling Analysis](#scaling-analysis)
-- [Algorithm Variants](#algorithm-variants)
-- [Citation](#citation)
-- [References](#references)
-
-## Key Innovation
-
-Unlike traditional tokenwise or blockwise verification, HSD uses a **hierarchical approach**:
-- Draft tokens are organized in a tree/trie structure
-- Verification proceeds level-by-level from root to leaves
-- If a token at level k is rejected, verification stops for that subtree
-- If accepted, continues to verify all children at the next level
-
-This hierarchical structure enables HSD to accept more tokens while maintaining **lossless verification** - producing exactly the same distribution as the target model.
-
-## Theoretical Guarantee
-
-**Proposition 1**: For any target distribution p(·) and draft distribution q(·), HSD accepts more tokens in expectation than both tokenwise and blockwise verification.
+- [Hierarchical Speculative Decoding (HSD)](#hierarchical-speculative-decoding-hsd)
+  - [Table of Contents](#table-of-contents)
+  - [Compare the Expected Number of Accepted Tokens with a Toy Example](#compare-the-expected-number-of-accepted-tokens-with-a-toy-example)
+  - [Reproduce Experiment Results on GSM8K](#reproduce-experiment-results-on-gsm8k)
+    - [Requirements](#requirements)
+    - [Single-Draft Verification](#single-draft-verification)
+    - [Multi-Draft Verification with Recursive Reject Sampling](#multi-draft-verification-with-recursive-reject-sampling)
+    - [Compute Metrics](#compute-metrics)
+    - [GSM8K Performance Results](#gsm8k-performance-results)
+      - [Accuracy Comparison (Table 2)](#accuracy-comparison-table-2)
+      - [Block Efficiency \& Speed (Table 3)](#block-efficiency--speed-table-3)
+  - [Human-Eval Results](#human-eval-results)
+  - [MMLU Results](#mmlu-results)
+  - [EAGLE Integration](#eagle-integration)
+    - [EAGLE + HSD Results](#eagle--hsd-results)
+  - [Scaling Analysis](#scaling-analysis)
+  - [Citation](#citation)
+  - [References](#references)
 
 ## Compare the Expected Number of Accepted Tokens with a Toy Example
 
@@ -70,12 +62,12 @@ cd chain-of-thought-hub/gsm8k
 Baseline methods:
 - **Tokenwise** verification
   ```bash
-  bash evaluate_speculative_qwen.sh
+  bash eval_speculative_qwen.sh
   ```
 
 - **Blockwise** verification
   ```bash
-  bash evaluate_speculative_qwen_blockwise.sh
+  bash eval_speculative_qwen_blockwise.sh
   ```
 
 Our methods:
@@ -86,7 +78,7 @@ Our methods:
 
 - **HSD (clever)** - optimized with smart stopping criterion
   ```bash
-  bash evaluate_speculative_qwen_backward_clever.sh
+  bash eval_speculative_qwen_backward_clever.sh
   ```
 
 ### Multi-Draft Verification with Recursive Reject Sampling
@@ -95,12 +87,12 @@ Extends HSD to use multiple independent draft models for even better performance
 
 - **Tokenwise** multidraft
   ```bash
-  bash evaluate_speculative_qwen_multidraft_11.sh
+  bash eval_speculative_qwen_multidraft_11.sh
   ```
 
 - **HSD** multidraft
   ```bash
-  bash evaluate_speculative_qwen_backward_clever_multidraft_11.sh
+  bash eval_speculative_qwen_backward_clever_multidraft_11.sh
   ```
 
 ### Compute Metrics
@@ -327,134 +319,6 @@ cd EAGLE-hsd
 bash 1114_eagle_eval.sh
 ```
 
-## Ablation Studies
-
-### Effect of Draft Length (γ)
-
-Vary the draft length using `--gamma` parameter:
-
-```bash
-# γ = 4
-bash evaluate_speculative_qwen_backward_clever.sh  # Edit: --gamma 4
-
-# γ = 16 (default)
-bash evaluate_speculative_qwen_backward_clever.sh  # Edit: --gamma 16
-```
-
-<table>
-  <thead>
-    <tr>
-      <th>γ (Draft Length)</th>
-      <th>Block Efficiency</th>
-      <th>Decoding Speed</th>
-      <th>Latency (ms/token)</th>
-      <th>Throughput (tokens/s)</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>4</td>
-      <td>2.51</td>
-      <td>2.38x</td>
-      <td>26.38</td>
-      <td>37.91</td>
-    </tr>
-    <tr>
-      <td>8</td>
-      <td>2.91</td>
-      <td>2.64x</td>
-      <td>23.79</td>
-      <td>42.03</td>
-    </tr>
-    <tr>
-      <td><strong>16</strong></td>
-      <td><strong>3.25</strong></td>
-      <td><strong>2.87x</strong></td>
-      <td><strong>21.88</strong></td>
-      <td><strong>45.70</strong></td>
-    </tr>
-  </tbody>
-</table>
-
-### Effect of Tree Branching Factor
-
-The branching factor (number of candidates per position) is controlled by the sampling strategy. Use temperature parameter to control branching:
-
-```bash
-# Lower temperature = more focused branching
-bash evaluate_speculative_qwen_backward_clever.sh  # Edit: --temperature 0.8
-
-# Higher temperature = more diverse branching
-bash evaluate_speculative_qwen_backward_clever.sh  # Edit: --temperature 1.0
-```
-
-<table>
-  <thead>
-    <tr>
-      <th>Branching Factor</th>
-      <th>Block Efficiency</th>
-      <th>Decoding Speed</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>1 (greedy)</td>
-      <td>2.21</td>
-      <td>2.14x</td>
-    </tr>
-    <tr>
-      <td>2</td>
-      <td>2.71</td>
-      <td>2.51x</td>
-    </tr>
-    <tr>
-      <td>4</td>
-      <td>3.25</td>
-      <td>2.87x</td>
-    </tr>
-  </tbody>
-</table>
-
-### Number of Drafts (Multi-Draft)
-
-Vary the number of independent draft models using `--multidraft` parameter:
-
-```bash
-# Single draft (default)
-bash evaluate_speculative_qwen_backward_clever.sh
-
-# 11 parallel drafts
-bash evaluate_speculative_qwen_backward_clever_multidraft_11.sh  # Edit: --multidraft 11
-```
-
-<table>
-  <thead>
-    <tr>
-      <th># Drafts</th>
-      <th>Block Efficiency</th>
-      <th>Decoding Speed</th>
-      <th>Latency (ms/token)</th>
-      <th>Throughput (tokens/s)</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>1</td>
-      <td>3.25</td>
-      <td>2.87x</td>
-      <td>21.88</td>
-      <td>45.70</td>
-    </tr>
-    <tr>
-      <td>11</td>
-      <td><strong>6.85</strong></td>
-      <td><strong>5.12x</strong></td>
-      <td><strong>12.27</strong></td>
-      <td><strong>81.50</strong></td>
-    </tr>
-  </tbody>
-</table>
-
 ## Scaling Analysis
 
 HSD maintains consistent advantages across model sizes (Figure 4 in paper):
@@ -495,13 +359,6 @@ Scaling trend results:
     </tr>
   </tbody>
 </table>
-
-## Algorithm Variants
-
-- **Tokenwise**: Verify tokens one by one, stop at first rejection
-- **Blockwise**: Verify entire block as a single unit, reject all if any token fails
-- **NaiveHSD**: Hierarchical verification with basic stopping criterion
-- **HSD (clever)**: Hierarchical verification with optimized stopping criterion that maximizes expected accepted tokens
 
 ## Citation
 
