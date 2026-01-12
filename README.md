@@ -1,6 +1,6 @@
 # Hierarchical Speculative Decoding (HSD)
 
-**Hierarchical Speculative Decoding (HSD)** is a state-of-the-art lossless verification algorithm for accelerating large language model (LLM) inference. HSD verifies draft outputs using the joint probability of multiple draft tokens and reconstructs the target model’s joint distribution through a hierarchy of resampling distributions across different branches. This hierarchical verification enables HSD to accept more tokens in expectation than both token-wise and block-wise verification methods, while strictly preserving the target model’s output distribution—i.e., without any degradation in model performance.
+**Hierarchical Speculative Decoding (HSD)** is a state-of-the-art lossless verification algorithm for accelerating large language model (LLM) inference. HSD verifies draft outputs using the joint probability of multiple draft tokens and reconstructs the target model’s joint distribution through a hierarchy of resampling distributions across different branches. This hierarchical verification enables HSD to **accept more tokens in expectation** than both token-wise and block-wise verification methods, while **strictly preserving the target model’s output distribution**—i.e., without any degradation in model performance.
 
 Moreover, its strong explainability and generality make it readily integrable into a wide range of speculative decoding frameworks. Notably, HSD serves as a **drop-in replacement** for token-wise verification in a pre-fine-tuned EAGLE-3 model, yielding over a 12% performance improvement **without requiring any additional fine-tuning**. 
 
@@ -8,7 +8,6 @@ Moreover, its strong explainability and generality make it readily integrable in
 
 - [Hierarchical Speculative Decoding (HSD)](#hierarchical-speculative-decoding-hsd)
   - [Table of Contents](#table-of-contents)
-  - [Compare the Expected Number of Accepted Tokens with a Toy Example](#compare-the-expected-number-of-accepted-tokens-with-a-toy-example)
   - [Reproduce Experiment Results on GSM8K](#reproduce-experiment-results-on-gsm8k)
     - [Requirements](#requirements)
     - [Single-Draft Verification](#single-draft-verification)
@@ -17,34 +16,11 @@ Moreover, its strong explainability and generality make it readily integrable in
     - [GSM8K Performance Results](#gsm8k-performance-results)
       - [Accuracy Comparison (Table 2)](#accuracy-comparison-table-2)
       - [Block Efficiency \& Speed (Table 3)](#block-efficiency--speed-table-3)
-  - [Human-Eval Results](#human-eval-results)
-  - [MMLU Results](#mmlu-results)
   - [EAGLE Integration](#eagle-integration)
     - [EAGLE + HSD Results](#eagle--hsd-results)
   - [Scaling Analysis](#scaling-analysis)
   - [Citation](#citation)
   - [References](#references)
-
-## Compare the Expected Number of Accepted Tokens with a Toy Example
-
-Let p(·) and q(·) denote the target and draft distributions, respectively. Following [1], we define two context-independent distributions as a toy example:
-
-```
-p(A) = 1/3,  p(B) = 2/3
-q(A) = 2/3,  q(B) = 1/3
-```
-
-Expected number of accepted tokens (E[N]):
-- Tokenwise: 5/9 ≈ 0.56
-- Blockwise: 4/9 ≈ 0.44
-- **HSD: 7/9 ≈ 0.78** ✓
-
-You can run the simulation with this toy example using:
-```bash
-python simulation.py
-```
-
-See Figure 2 in the paper for visual intuition of the hierarchical trie structure.
 
 ## Reproduce Experiment Results on GSM8K
 
@@ -54,7 +30,7 @@ Please install `python=3.10` and `transformers=4.46.3`, then copy the provided f
 ```
 anaconda3/envs/your_environment_name/lib/python3.10/site-packages/transformers/
 ```
-
+Then navigate to `chain-of-thought-hub/gsm8k`:
 ```bash
 cd chain-of-thought-hub/gsm8k
 ```
@@ -78,7 +54,7 @@ Our methods:
   bash eval_speculative_qwen_backward.sh
   ```
 
-- **HSD (clever)** - optimized with smart stopping criterion
+- **HSD (clever)** - optimized with smart capping mechanism
   ```bash
   bash eval_speculative_qwen_backward_clever.sh
   ```
@@ -116,7 +92,6 @@ Using Qwen2.5-0.5B as draft model on GSM8K:
       <th>Target Model</th>
       <th>Tokenwise</th>
       <th>HSD (ours)</th>
-      <th>Accuracy Gain</th>
     </tr>
   </thead>
   <tbody>
@@ -124,154 +99,30 @@ Using Qwen2.5-0.5B as draft model on GSM8K:
       <td>Qwen2.5-72B</td>
       <td>0.8213</td>
       <td><strong>0.8517</strong></td>
-      <td>+3.0%</td>
     </tr>
     <tr>
       <td>Qwen2.5-32B</td>
       <td>0.8213</td>
       <td><strong>0.8479</strong></td>
-      <td>+2.7%</td>
     </tr>
     <tr>
       <td>Qwen2.5-14B</td>
       <td>0.8327</td>
       <td><strong>0.8327</strong></td>
-      <td>+0.0%</td>
     </tr>
   </tbody>
 </table>
 
-HSD maintains or improves accuracy while being significantly faster.
-
+HSD maintains or slightly improves accuracy (both Token-wise and HSD are lossless methods, so any deviations are due to randomness) while offering significantly faster inference.
 #### Block Efficiency & Speed (Table 3)
+| Method         | BE 14B | BE 32B | BE 72B | DS 14B | DS 32B | DS 72B |
+|----------------|--------|--------|--------|--------|--------|--------|
+| Tokenwise      | 5.99   | 6.14   | 6.44   | 82.28  | 53.87  | 31.49  |
+| Blockwise      | 6.13 (+2.3%) | 6.26 (+2.0%) | 6.53 (+1.4%) | 86.06 (+4.6%) | 54.91 (+1.9%) | 31.79 (+1.0%) |
+| **HSD (Ours)** | **6.30 (+5.2%)** | **6.47 (+5.4%)** | **6.65 (+3.3%)** | **91.05 (+10.7%)** | **57.12 (+6.0%)** | **32.52 (+3.3%)** |
 
-<table>
-  <thead>
-    <tr>
-      <th>Method</th>
-      <th>Block Efficiency</th>
-      <th>Decoding Speed</th>
-      <th>Latency (ms/token)</th>
-      <th>Throughput (tokens/s)</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>No Speculative</td>
-      <td>-</td>
-      <td>1.00x</td>
-      <td>62.80</td>
-      <td>15.92</td>
-    </tr>
-    <tr>
-      <td>Tokenwise</td>
-      <td>1.00</td>
-      <td>1.47x</td>
-      <td>42.72</td>
-      <td>23.41</td>
-    </tr>
-    <tr>
-      <td>Blockwise</td>
-      <td>2.21</td>
-      <td>2.14x</td>
-      <td>29.35</td>
-      <td>34.07</td>
-    </tr>
-    <tr>
-      <td>NaiveHSD</td>
-      <td>2.21</td>
-      <td>2.14x</td>
-      <td>29.35</td>
-      <td>34.07</td>
-    </tr>
-    <tr>
-      <td><strong>HSD (ours)</strong></td>
-      <td><strong>3.25</strong></td>
-      <td><strong>2.87x</strong></td>
-      <td><strong>21.88</strong></td>
-      <td><strong>45.70</strong></td>
-    </tr>
-  </tbody>
-</table>
 
-HSD achieves **~2x speedup** over blockwise verification while being lossless.
-
-## Human-Eval Results
-
-**Note**: Results shown below. Reproduction code to be added in future update.
-
-Human-Eval evaluates code generation capability. Results using Qwen2.5 models with different draft lengths (γ):
-
-<table>
-  <thead>
-    <tr>
-      <th>Target Model</th>
-      <th>Draft Model</th>
-      <th>γ=4 Tokenwise</th>
-      <th>γ=16 Tokenwise</th>
-      <th>γ=4 HSD</th>
-      <th>γ=16 HSD</th>
-      <th>HSD Gain (γ=16)</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>Qwen2.5-32B</td>
-      <td>Qwen2.5-0.5B</td>
-      <td>0.5252</td>
-      <td>0.6048</td>
-      <td>0.5495</td>
-      <td><strong>0.6162</strong></td>
-      <td>+1.9%</td>
-    </tr>
-    <tr>
-      <td>Qwen2.5-14B</td>
-      <td>Qwen2.5-0.5B</td>
-      <td>0.5252</td>
-      <td>0.5971</td>
-      <td>0.5495</td>
-      <td><strong>0.6111</strong></td>
-      <td>+2.4%</td>
-    </tr>
-  </tbody>
-</table>
-
-## MMLU Results
-
-**Note**: Results shown below. Reproduction code to be added in future update.
-
-MMLU (Massive Multitask Language Understanding) benchmark results across different model sizes:
-
-<table>
-  <thead>
-    <tr>
-      <th>Target Model</th>
-      <th>Tokenwise</th>
-      <th>HSD (ours)</th>
-      <th>Accuracy Gain</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>Qwen2.5-72B</td>
-      <td>0.6850</td>
-      <td><strong>0.7073</strong></td>
-      <td>+2.3%</td>
-    </tr>
-    <tr>
-      <td>Qwen2.5-32B</td>
-      <td>0.6391</td>
-      <td><strong>0.6630</strong></td>
-      <td>+2.4%</td>
-    </tr>
-    <tr>
-      <td>Qwen2.5-14B</td>
-      <td>0.5670</td>
-      <td><strong>0.5870</strong></td>
-      <td>+2.0%</td>
-    </tr>
-  </tbody>
-</table>
+HSD consistently improves both Block Efficiency (BE) and Decoding Speed (DS) relative to Tokenwise and Blockwise verification. For **GSM8K**, the gains are stable across scales, with BE improvements of **5.2%--5.4%** at 14B/32B and **3.3%** at 72B, accompanied by DS increases of up to **10.7%**.
 
 ## EAGLE Integration
 
