@@ -17,8 +17,8 @@ Moreover, its strong explainability and generality make it readily integrable in
     - [Multi-Draft Verification with Recursive Reject Sampling](#multi-draft-verification-with-recursive-reject-sampling)
     - [Compute Metrics](#compute-metrics)
     - [GSM8K Performance Results](#gsm8k-performance-results)
-      - [Accuracy Comparison (Table 2)](#accuracy-comparison-table-2)
-      - [Block Efficiency \& Speed (Table 3)](#block-efficiency--speed-table-3)
+      - [Accuracy Comparison (Table 2)](#accuracy-comparison-table-1)
+      - [Block Efficiency \& Speed (Table 3)](#block-efficiency--speed-table-2)
   - [EAGLE Integration](#eagle-integration)
     - [EAGLE + HSD Results](#eagle--hsd-results)
   - [Citation](#citation)
@@ -142,7 +142,7 @@ HSD can be integrated with [EAGLE-3](https://github.com/SforAiD/LLM-Eagle) to fu
 
 To demonstrate HSD’s compatibility with advanced decoding systems, we integrated it into the state-of-the-art **EAGLE-3-LLaMa3.1-Instruct-8B** (with a default draft length of 7) by replacing its token-wise verifier, as shown in **Table 3**. Importantly, HSD operates orthogonally to the drafting phase, so it can be used directly with a pre-fine-tuned EAGLE-3 model **without requiring any additional fine-tuning**.
 
-### **Table 3*8: EAGLE-3 + HSD (EAGLE-3H) Results
+### **Table 3**: EAGLE-3 + HSD (EAGLE-3H) Results
 | Method               | Block Eff. | Decoding Speed |
 |----------------------|------------|----------------|
 | EAGLE-3              | 3.40       | 71.59          |
