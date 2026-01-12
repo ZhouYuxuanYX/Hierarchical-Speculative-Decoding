@@ -1,6 +1,8 @@
 # Hierarchical Speculative Decoding (HSD)
 
-Hierarchical Speculative Decoding (HSD) is a state-of-the-art lossless verification algorithm for accelerating large language model (LLM) inference. HSD verifies draft outputs using the joint probability of multiple draft tokens and reconstructs the target model’s joint distribution through a hierarchy of resampling distributions across different branches. This hierarchical verification enables HSD to accept more tokens in expectation than both token-wise and block-wise verification methods, while strictly preserving the target model’s output distribution—i.e., without any degradation in model performance.
+**Hierarchical Speculative Decoding (HSD)** is a state-of-the-art lossless verification algorithm for accelerating large language model (LLM) inference. HSD verifies draft outputs using the joint probability of multiple draft tokens and reconstructs the target model’s joint distribution through a hierarchy of resampling distributions across different branches. This hierarchical verification enables HSD to accept more tokens in expectation than both token-wise and block-wise verification methods, while strictly preserving the target model’s output distribution—i.e., without any degradation in model performance.
+
+Moreover, its strong explainability and generality make it readily integrable into a wide range of speculative decoding frameworks. Notably, HSD serves as a **drop-in replacement** for token-wise verification in a pre-fine-tuned EAGLE-3 model, yielding over a 12% performance improvement **without requiring any additional fine-tuning**. 
 
 ## Table of Contents
 
