@@ -173,6 +173,6 @@ bash 1114_eagle_eval.sh
 
 ## References
 
-[1] Sun, Ziteng, et al. "Block verification accelerates speculative decoding." arXiv preprint arXiv:2403.10444 (2024).
+1. [Chain-of-Thought Hub](https://github.com/FranxYao/chain-of-thought-hub)  
+2. [EAGLE-3 Repository](https://github.com/SforAiD/LLM-Eagle)
 
-[2] For EAGLE integration: See the [EAGLE repository](https://github.com/SforAiD/LLM-Eagle)
