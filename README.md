@@ -18,7 +18,6 @@ Moreover, its strong explainability and generality make it readily integrable in
       - [Block Efficiency \& Speed (Table 3)](#block-efficiency--speed-table-3)
   - [EAGLE Integration](#eagle-integration)
     - [EAGLE + HSD Results](#eagle--hsd-results)
-  - [Scaling Analysis](#scaling-analysis)
   - [Citation](#citation)
   - [References](#references)
 
@@ -84,7 +83,7 @@ python compute_speculative_stats.py
 
 Using Qwen2.5-0.5B as draft model on GSM8K:
 
-#### Accuracy Comparison (Table 2)
+#### **Table 1**: Accuracy Comparison
 
 <table>
   <thead>
@@ -114,7 +113,7 @@ Using Qwen2.5-0.5B as draft model on GSM8K:
 </table>
 
 HSD maintains or slightly improves accuracy (both Token-wise and HSD are lossless methods, so any deviations are due to randomness) while offering significantly faster inference.
-#### Block Efficiency & Speed (Table 3)
+#### **Table 2**: Block Efficiency & Speed 
 | Method         | BE 14B | BE 32B | BE 72B | DS 14B | DS 32B | DS 72B |
 |----------------|--------|--------|--------|--------|--------|--------|
 | Tokenwise      | 5.99   | 6.14   | 6.44   | 82.28  | 53.87  | 31.49  |
@@ -126,44 +125,17 @@ HSD consistently improves both Block Efficiency (BE) and Decoding Speed (DS) rel
 
 ## EAGLE Integration
 
-HSD can be integrated with [EAGLE](https://github.com/SforAiD/LLM-Eagle) for even better performance. EAGLE uses a lightweight autoregressive transformer to predict draft tokens, which can then be verified using HSD.
+HSD can be integrated with [EAGLE-3](https://github.com/SforAiD/LLM-Eagle) to further improve performance. EAGLE-3 fine-tunes an additional component to predict draft tokens from the target model's hidden features, eliminating the need for a separate draft model and thereby improving decoding speed. 
 
-### EAGLE + HSD Results
+To demonstrate HSD’s compatibility with advanced decoding systems, we integrated it into the state-of-the-art **EAGLE-3-LLaMa3.1-Instruct-8B** (with a default draft length of 7) by replacing its token-wise verifier, as shown in **Table 3**. Importantly, HSD operates orthogonally to the drafting phase, so it can be used directly with a pre-fine-tuned EAGLE-3 model **without requiring any additional fine-tuning**.
 
-<table>
-  <thead>
-    <tr>
-      <th>Model</th>
-      <th>Dataset</th>
-      <th>EAGLE Tokenwise</th>
-      <th>EAGLE+HSD</th>
-      <th>Speedup</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>LLaMA2-7B</td>
-      <td>GSM8K</td>
-      <td>0.5494</td>
-      <td><strong>0.5633</strong></td>
-      <td>~2.5x</td>
-    </tr>
-    <tr>
-      <td>Vicuna-7B</td>
-      <td>GSM8K</td>
-      <td>0.4476</td>
-      <td><strong>0.4568</strong></td>
-      <td>~2.3x</td>
-    </tr>
-    <tr>
-      <td>LLaMA3-8B</td>
-      <td>MMLU</td>
-      <td>0.7185</td>
-      <td><strong>0.7234</strong></td>
-      <td>~2.7x</td>
-    </tr>
-  </tbody>
-</table>
+### **Table 3*8: EAGLE-3 + HSD (EAGLE-3H) Results
+| Method               | Block Eff. | Decoding Speed |
+|----------------------|------------|----------------|
+| EAGLE-3              | 3.40       | 71.59          |
+| Blockwise            | N/A        | N/A            |
+| **EAGLE-3H (Ours)**  | **3.55 (+4.4%)** | **80.49 (+12.4%)** |
+
 
 For EAGLE integration setup, see the [EAGLE repository](https://github.com/SforAiD/LLM-Eagle) and the `EAGLE-hsd/` directory in this repo.
 
@@ -171,47 +143,6 @@ For EAGLE integration setup, see the [EAGLE repository](https://github.com/SforA
 cd EAGLE-3H
 bash 1114_eagle_eval.sh
 ```
-
-## Scaling Analysis
-
-HSD maintains consistent advantages across model sizes (Figure 4 in paper):
-
-- **Block efficiency** improves with larger models (from ~2.5x at 14B to ~3.3x at 72B)
-- **Consistent speedup** across all model scales (2.5x - 3.0x)
-- **Accuracy preservation** or improvement across all model sizes
-
-Scaling trend results:
-
-<table>
-  <thead>
-    <tr>
-      <th>Target Model</th>
-      <th>Parameters</th>
-      <th>Block Efficiency</th>
-      <th>Speedup vs Tokenwise</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>Qwen2.5-14B</td>
-      <td>14B</td>
-      <td>2.87</td>
-      <td>1.95x</td>
-    </tr>
-    <tr>
-      <td>Qwen2.5-32B</td>
-      <td>32B</td>
-      <td>3.12</td>
-      <td>2.01x</td>
-    </tr>
-    <tr>
-      <td>Qwen2.5-72B</td>
-      <td>72B</td>
-      <td>3.25</td>
-      <td>1.95x</td>
-    </tr>
-  </tbody>
-</table>
 
 ## Citation
 
