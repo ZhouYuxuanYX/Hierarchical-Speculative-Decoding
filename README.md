@@ -1,6 +1,6 @@
 # Hierarchical Speculative Decoding (HSD)
 
-Hierarchical Speculative Decoding is the state-of-the-art lossless verification algorithm for faster LLM inference. HSD organizes draft tokens in a trie structure and performs level-by-level verification, accepting more tokens in expectation than both tokenwise and blockwise verification.
+Hierarchical Speculative Decoding (HSD) is a state-of-the-art lossless verification algorithm for accelerating large language model (LLM) inference. HSD verifies draft outputs using the joint probability of multiple draft tokens and reconstructs the target model’s joint distribution through a hierarchy of resampling distributions across different branches. This hierarchical verification enables HSD to accept more tokens in expectation than both token-wise and block-wise verification methods, while strictly preserving the target model’s output distribution—i.e., without any degradation in model performance.
 
 ## Table of Contents
 
@@ -315,7 +315,7 @@ HSD can be integrated with [EAGLE](https://github.com/SforAiD/LLM-Eagle) for eve
 For EAGLE integration setup, see the [EAGLE repository](https://github.com/SforAiD/LLM-Eagle) and the `EAGLE-hsd/` directory in this repo.
 
 ```bash
-cd EAGLE-hsd
+cd EAGLE-3H
 bash 1114_eagle_eval.sh
 ```
 
