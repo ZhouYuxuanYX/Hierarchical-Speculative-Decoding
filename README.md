@@ -29,7 +29,7 @@ Moreover, its strong explainability and generality make it readily integrable in
 Experiments are conducted with the widely adopted GPTQ-quantized 8-bit instruction-tuned Qwen2.5 series [Bai et al., 2023](#). By default, we employ the 0.5B model as the draft model and 72B as the target model, with a temperature of 1. All experiments were conducted on a single NVIDIA H20 GPU with 96 GB of memory, unless otherwise specified.
 
 ### Baselines and Metrics
-We compare two lossless verification methods—Token-wise [Leviathan et al., 2023](#) and Block-wise [Sun et al., 2024](#)—using two metrics: *Block Efficiency* (tokens/step) and *Decoding Speed* (tokens/second).
+We compare two lossless verification methods—Token-wise [Leviathan et al., 2023](https://arxiv.org/abs/2211.17192) and Block-wise [Sun et al., 2024](https://arxiv.org/abs/2403.10444)—using two metrics: *Block Efficiency* (tokens/step) and *Decoding Speed* (tokens/second).
 - **Block Efficiency** measures the average tokens generated per serial call to the target model, reflecting intrinsic efficiency independent of hardware.  
 - **Decoding Speed** indicates tokens produced per second for practical reference, though it depends on hardware and implementation.
 
