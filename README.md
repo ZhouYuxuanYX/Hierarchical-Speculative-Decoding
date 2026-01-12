@@ -506,11 +506,14 @@ Scaling trend results:
 ## Citation
 
 ```bibtex
-@inproceedings{zhou2026hierarchical,
-  title={Hierarchical Speculative Decoding for Faster LLM Inference},
-  author={Zhou, Yuxuan and Li, Heng and ...},
-  booktitle={International Conference on Learning Representations (ICLR)},
-  year={2026}
+@misc{zhou2026overcomingjointintractabilitylossless,
+      title={Overcoming Joint Intractability with Lossless Hierarchical Speculative Decoding}, 
+      author={Yuxuan Zhou and Fei Huang and Heng Li and Fengyi Wu and Tianyu Wang and Jianwei Zhang and Junyang Lin and Zhi-Qi Cheng},
+      year={2026},
+      eprint={2601.05724},
+      archivePrefix={arXiv},
+      primaryClass={cs.AI},
+      url={https://arxiv.org/abs/2601.05724}, 
 }
 ```
 
