@@ -93,7 +93,6 @@ for count in counts:
     draft_eval.append(draft / len_)
     target_eval.append(target / len_)
     total_step.append(step / len_)
-    sample_length.append(sample / len_)  # block efficiency
     times.append(time_ / len_)
     
     # Fix speed calculation to match eval.py
@@ -112,7 +111,6 @@ speed = np.array(lens)
 
 print("\n=== Summary Statistics ===")
 print(f"Speed (tokens/s): {speed}")
-print(f"BE (Block Efficiency): {sample_length}")
 
 
 
