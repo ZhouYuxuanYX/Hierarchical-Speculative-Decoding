@@ -134,7 +134,7 @@ HSD maintains or slightly improves accuracy (both Token-wise and HSD are lossles
 | **HSD (Ours)** | **6.30 (+5.2%)** | **6.47 (+5.4%)** | **6.65 (+3.3%)** | **91.05 (+10.7%)** | **57.12 (+6.0%)** | **32.52 (+3.3%)** |
 
 
-HSD consistently improves both Block Efficiency (BE) and Decoding Speed (DS) relative to Tokenwise and Blockwise verification. For **GSM8K**, the gains are stable across scales, with BE improvements of **5.2%--5.4%** at 14B/32B and **3.3%** at 72B, accompanied by DS increases of up to **10.7%**.
+HSD consistently improves both Block Efficiency (BE) and Decoding Speed (DS) relative to Tokenwise and Blockwise verification. For **GSM8K**, the gains are stable across scales, with BE improvements of **5.2%-5.4%** at 14B/32B and **3.3%** at 72B, accompanied by DS increases of up to **10.7%**.
 
 ## EAGLE Integration
 
