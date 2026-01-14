@@ -504,21 +504,21 @@ def evaluate_posterior(
                 # i want to control the joint prob ratio of the preceding draft tokens to be <=1,
                 joint_p_previous = torch.exp(torch.log(p_previous).cumsum(1)).unsqueeze(-1)
 
-                ratio = joint_p_previous / joint_q_previous
+                # ratio = joint_p_previous / joint_q_previous
 
-                previous_max = 1
-                new_p_previous = torch.ones_like(joint_p_previous).to(joint_p_previous.device)
-                for k in range(new_candidate_length-n_matches):
-                    if ratio[:, k] > previous_max:
-                        previous_max = ratio[:, k]
+                # previous_max = 1
+                # new_p_previous = torch.ones_like(joint_p_previous).to(joint_p_previous.device)
+                # for k in range(new_candidate_length-n_matches):
+                #     if ratio[:, k] > previous_max:
+                #         previous_max = ratio[:, k]
 
-                    new_p_previous[:, k] = joint_p_previous[:, k] / previous_max
+                #     new_p_previous[:, k] = joint_p_previous[:, k] / previous_max
 
 
 
-                p_next = new_p_previous * p_new
+                # p_next = new_p_previous * p_new
 
-                # p_next = torch.minimum(p_previous.cumprod(-1), q_previous.cumprod(-1)).unsqueeze(-1) * p_new
+                p_next = torch.minimum(p_previous.cumprod(-1), q_previous.cumprod(-1)).unsqueeze(-1) * p_new
 
             else:
                 # # for multidraft
@@ -541,19 +541,20 @@ def evaluate_posterior(
                 # i want to control the joint prob ratio of the preceding draft tokens to be <=1,
                 joint_p_previous = torch.exp(torch.log(p_previous).cumsum(1)).unsqueeze(-1)
 
-                # p_next = torch.minimum(log_p_previous, log_q_previous) * p[:, :candidate_length]
-                ratio = joint_p_previous / joint_q_previous
+              
+                # ratio = joint_p_previous / joint_q_previous
 
-                previous_max = 1
-                new_p_previous = torch.ones_like(joint_p_previous).to(joint_p_previous.device)
-                for k in range(new_candidate_length-1):
-                    if ratio[:, k] > previous_max:
-                        previous_max = ratio[:, k]
+                # previous_max = 1
+                # new_p_previous = torch.ones_like(joint_p_previous).to(joint_p_previous.device)
+                # for k in range(new_candidate_length-1):
+                #     if ratio[:, k] > previous_max:
+                #         previous_max = ratio[:, k]
 
-                    new_p_previous[:, k] = joint_p_previous[:, k] / previous_max
+                #     new_p_previous[:, k] = joint_p_previous[:, k] / previous_max
 
-                p_next = new_p_previous * p[ind:ind + 1, :new_candidate_length-1]
-                # p_next = torch.minimum(log_p_previous, log_q_previous) * p[ind:ind + 1, :new_candidate_length-1]
+                # p_next = new_p_previous * p[ind:ind + 1, :new_candidate_length-1]
+                
+                p_next = torch.minimum(log_p_previous, log_q_previous) * p[ind:ind + 1, :new_candidate_length-1]
 
 
             # be careful with the positions where diffs=0
