@@ -86,6 +86,40 @@ def load_flores200_questions(question_begin=None, question_end=None, source_lang
     return questions
 
 
+def load_gsm8k_questions(question_begin=None, question_end=None, split="test"):
+    """Load questions from GSM8K dataset from Hugging Face.
+    
+    Args:
+        question_begin: Starting index for questions (optional)
+        question_end: Ending index for questions (optional)
+        split: Dataset split to use (default: "test")
+    
+    Returns:
+        List of questions in the expected format with question_id, category, turns, and reference
+    """
+    print(f"Loading GSM8K dataset (split: {split})...")
+    dataset = load_dataset("openai/gsm8k", "main", split=split)
+    print(f"Loaded {len(dataset)} questions from GSM8K {split} split")
+    
+    # Apply question_begin and question_end
+    start_idx = question_begin if question_begin is not None else 0
+    end_idx = question_end if question_end is not None else len(dataset)
+    
+    questions = []
+    for idx in range(start_idx, min(end_idx, len(dataset))):
+        item = dataset[idx]
+        question_text = item['question']
+        answer_text = item['answer']
+        
+        questions.append({
+            "question_id": idx,
+            "category": "gsm8k",
+            "turns": [question_text],
+            "reference": [answer_text]
+        })
+    
+    return questions
+
 
 def run_eval(
         base_model_path,
@@ -108,6 +142,9 @@ def run_eval(
         source_lang = getattr(args, 'source_lang', 'eng_Latn')
         target_lang = getattr(args, 'target_lang', 'fra_Latn')
         questions = load_flores200_questions(question_begin, question_end, source_lang, target_lang)
+    elif args.bench_name == "gsm8k":
+        gsm8k_split = getattr(args, 'gsm8k_split', 'test')
+        questions = load_gsm8k_questions(question_begin, question_end, gsm8k_split)
     else:
         questions = load_questions(question_file, question_begin, question_end)
     # random shuffle the questions to balance the loading
@@ -535,6 +572,12 @@ if __name__ == "__main__":
         type=str,
         default="deu_Latn",
         help="Target language code for flores200 translation (e.g., fra_Latn for French)",
+    )
+    parser.add_argument(
+        "--gsm8k-split",
+        type=str,
+        default="test",
+        help="GSM8K dataset split to use (test or train)",
     )
 
     # eagle: hsd + not hsd  temperate=1 top_p=1, top_k=0

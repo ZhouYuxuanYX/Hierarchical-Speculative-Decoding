@@ -419,7 +419,7 @@ def evaluate_posterior(
 
     else:
         logits = logits_processor(None, logits)
-        p = logits.softmax(dim=-1).double() if "mps" not in str(logits.device) else logits.softmax(dim=-1)
+        p = logits.softmax(dim=-1) if "mps" not in str(logits.device) else logits.softmax(dim=-1)
         n_matches = 1
         current_step_match = 0
         ind = 0
@@ -486,24 +486,38 @@ def evaluate_posterior(
 
                 q_i = torch.ones(1, new_candidate_length-n_matches).to(logits.device)
                 q_previous = torch.roll(q_i, 1, 1)
-                q_previous[:, 0] = log_q_previous[:, current_step_match]
+                q_previous[:, 0] = joint_q_previous[:, current_step_match]
 
                 # here our p_res is joint probability from 1 to n_matches, not the tokenwise probability
-                log_q_previous = torch.exp(torch.log(q_previous).cumsum(1).unsqueeze(-1))
-                q_next = log_q_previous * torch.nn.functional.one_hot(new_candidate_input_ids, num_classes=logits.shape[-1])
+                joint_q_previous = torch.exp(torch.log(q_previous).cumsum(1).unsqueeze(-1))
+                q_next = joint_q_previous * torch.nn.functional.one_hot(new_candidate_input_ids, num_classes=logits.shape[-1])
 
                 # p_i has to be re-selected after normalizing p_primes
                 # p_primes has to be re-normalized after applying zero masks, before applied with p_previous
 
                 p_previous = torch.roll(p_i, 1, 1)
-                p_previous[:, 0] = log_p_previous[:, current_step_match]
+                p_previous[:, 0] = joint_p_previous[:, current_step_match]
 
                 # p_primes doesn't sum to one, because they are just sub-branches of the full joint distribution tree
                 # i have to normalize them to sum=1 when treating as marginal probabilities, just as when i do the resampling during forward sampling
                 # i want to control the joint prob ratio of the preceding draft tokens to be <=1,
-                log_p_previous = torch.exp(torch.log(p_previous).cumsum(1)).unsqueeze(-1)
+                joint_p_previous = torch.exp(torch.log(p_previous).cumsum(1)).unsqueeze(-1)
 
-                p_next = torch.minimum(p_previous.cumprod(-1), q_previous.cumprod(-1)).unsqueeze(-1) * p_new
+                ratio = joint_p_previous / joint_q_previous
+
+                previous_max = 1
+                new_p_previous = torch.ones_like(joint_p_previous).to(joint_p_previous.device)
+                for k in range(new_candidate_length-n_matches):
+                    if ratio[:, k] > previous_max:
+                        previous_max = ratio[:, k]
+
+                    new_p_previous[:, k] = joint_p_previous[:, k] / previous_max
+
+
+
+                p_next = new_p_previous * p_new
+
+                # p_next = torch.minimum(p_previous.cumprod(-1), q_previous.cumprod(-1)).unsqueeze(-1) * p_new
 
             else:
                 # # for multidraft
@@ -511,8 +525,8 @@ def evaluate_posterior(
 
                 q_previous = torch.roll(q_i, 1, 1)
                 q_previous[:, 0] = 1
-                log_q_previous = torch.exp(torch.log(q_previous).cumsum(1).unsqueeze(-1))
-                q_next = log_q_previous * torch.nn.functional.one_hot(new_candidate_input_ids, num_classes=logits.shape[-1])
+                joint_q_previous = torch.exp(torch.log(q_previous).cumsum(1).unsqueeze(-1))
+                q_next = joint_q_previous * torch.nn.functional.one_hot(new_candidate_input_ids, num_classes=logits.shape[-1])
                 # else:
                 # p_i corresponds to marginal probability
                 p_i = p[ind:ind + 1, torch.arange(n_matches-1, new_candidate_length-1),
@@ -524,8 +538,21 @@ def evaluate_posterior(
                 p_previous[:, 0] = 1
 
                 # i want to control the joint prob ratio of the preceding draft tokens to be <=1,
-                log_p_previous = torch.exp(torch.log(p_previous).cumsum(1)).unsqueeze(-1)
-                p_next = torch.minimum(log_p_previous, log_q_previous) * p[ind:ind + 1, :new_candidate_length-1]
+                joint_p_previous = torch.exp(torch.log(p_previous).cumsum(1)).unsqueeze(-1)
+
+                # p_next = torch.minimum(log_p_previous, log_q_previous) * p[:, :candidate_length]
+                ratio = joint_p_previous / joint_q_previous
+
+                previous_max = 1
+                new_p_previous = torch.ones_like(joint_p_previous).to(joint_p_previous.device)
+                for k in range(new_candidate_length-1):
+                    if ratio[:, k] > previous_max:
+                        previous_max = ratio[:, k]
+
+                    new_p_previous[:, k] = joint_p_previous[:, k] / previous_max
+
+                p_next = new_p_previous * p[ind:ind + 1, :new_candidate_length-1]
+                # p_next = torch.minimum(log_p_previous, log_q_previous) * p[ind:ind + 1, :new_candidate_length-1]
 
 
             # be careful with the positions where diffs=0
