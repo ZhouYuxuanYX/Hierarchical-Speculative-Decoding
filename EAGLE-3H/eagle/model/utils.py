@@ -432,7 +432,8 @@ def evaluate_posterior(
             else:
                 continue
 
-            # avoid token id = -1 due to the batch generation after eos token
+            # avoid token id = -1 due to the batch generation after eos token, but the eos token is then not counted into the number of accepted tokens, 
+            # affecting a fair comparison of block efficiency
             new_candidate_length = (candidates[ind:ind + 1, -candidate_length:] != -1).sum().item()
 
             if new_candidate_length == candidate_length:
