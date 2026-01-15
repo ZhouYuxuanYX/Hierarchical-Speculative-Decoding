@@ -5379,17 +5379,33 @@ def _speculative_sampling(
                 # p_next = torch.minimum(log_p_previous, log_q_previous) * p[:, :candidate_length]
 
 
-                ratio = joint_p_previous / joint_q_previous
+                # ratio = joint_p_previous / joint_q_previous
 
-                previous_max = 1
-                new_p_previous = torch.ones_like(joint_p_previous).to(joint_p_previous.device)
-                for k in range(candidate_length-n_matches):
-                    if ratio[:, k] > previous_max:
-                        previous_max = ratio[:, k]
+                # previous_max = 1
+                # new_p_previous = torch.ones_like(joint_p_previous).to(joint_p_previous.device)
+                # for k in range(candidate_length-n_matches):
+                #     if ratio[:, k] > previous_max:
+                #         previous_max = ratio[:, k]
 
-                    new_p_previous[:, k] = joint_p_previous[:, k] / previous_max
+                #     new_p_previous[:, k] = joint_p_previous[:, k] / previous_max
 
-                p_next = new_p_previous * p_new
+                # p_next = new_p_previous * p_new
+
+				## eliminate for loop
+				# Compute ratio
+				ratio = joint_p_previous / joint_q_previous  # [B, K]
+				
+				# Ensure the cap is at least 1
+				ratio = torch.maximum(ratio, torch.ones_like(ratio))
+				
+				# Running maximum over prefix dimension
+				previous_max, _ = torch.cummax(ratio, dim=1)  # [B, K]
+				
+				# Cap joint probabilities
+				new_p_previous = joint_p_previous / previous_max  # [B, K]
+				
+				# Next-step probability
+				p_next = new_p_previous * p_new
 
                 # p_next = torch.minimum(p_previous.cumprod(-1), q_previous.cumprod(-1)).unsqueeze(-1) * p_new
             else:
@@ -5428,19 +5444,33 @@ def _speculative_sampling(
                 joint_p_previous = torch.exp(torch.log(p_previous).cumsum(1)).unsqueeze(-1)
 
                 # p_next = torch.minimum(log_p_previous, log_q_previous) * p[:, :candidate_length]
-                ratio = joint_p_previous / joint_q_previous
+				
+                # ratio = joint_p_previous / joint_q_previous
 
-                previous_max = 1
-                new_p_previous = torch.ones_like(joint_p_previous).to(joint_p_previous.device)
-                for k in range(candidate_length):
-                    if ratio[:, k] > previous_max:
-                        previous_max = ratio[:, k]
+                # previous_max = 1
+                # new_p_previous = torch.ones_like(joint_p_previous).to(joint_p_previous.device)
+                # for k in range(candidate_length):
+                #     if ratio[:, k] > previous_max:
+                #         previous_max = ratio[:, k]
 
-                    new_p_previous[:, k] = joint_p_previous[:, k] / previous_max
+                #     new_p_previous[:, k] = joint_p_previous[:, k] / previous_max
 
-
-
+				## eliminate for loop
+				# Compute ratio
+				ratio = joint_p_previous / joint_q_previous  # [B, K]
+				
+				# Ensure the cap is at least 1
+				ratio = torch.maximum(ratio, torch.ones_like(ratio))
+				
+				# Running maximum over prefix dimension
+				previous_max, _ = torch.cummax(ratio, dim=1)  # [B, K]
+				
+				# Cap joint probabilities
+				new_p_previous = joint_p_previous / previous_max  # [B, K]
+				
+				# Next-step probability
                 p_next = new_p_previous * p[ind:ind + 1, :candidate_length]
+				
                 # p_next = torch.minimum(log_p_previous, log_q_previous) * p[ind:ind + 1, :candidate_length]
 
             # diffs = p_next - q_next
