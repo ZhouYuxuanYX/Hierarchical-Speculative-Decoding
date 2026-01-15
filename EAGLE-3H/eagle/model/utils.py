@@ -662,7 +662,7 @@ def evaluate_posterior(
         else:
             p_prime = p_n_plus_1
 
-        return ind, n_matches-1, p_prime.squeeze(), omit_for_stats
+        return ind, n_matches-1, p_prime.squeeze(), discount
 
 @torch.no_grad()
 def update_inference_inputs(
