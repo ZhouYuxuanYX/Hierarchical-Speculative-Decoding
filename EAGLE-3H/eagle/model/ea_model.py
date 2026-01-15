@@ -314,12 +314,13 @@ Compose an engaging travel blog post about a recent trip to Hawaii, highlighting
 
             # verification
             start_time = time.perf_counter()
-            best_candidate, accept_length, sample_p = evaluate_posterior(
+            best_candidate, accept_length, sample_p, discount = evaluate_posterior(
                 logits, candidates, logits_processor, hsd=hsd
             )
             end_time = time.perf_counter()
+
             per_length_eval_time.append(end_time - start_time)
-            per_length_accept_length.append(accept_length)
+            per_length_accept_length.append(accept_length - discount)
             # print(accept_length)
             # Adjusting the input sequence, draft model forward
             start_time = time.perf_counter()
