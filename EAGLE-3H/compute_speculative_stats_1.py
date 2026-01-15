@@ -94,6 +94,7 @@ for count in counts:
     target_eval.append(target / len_)
     total_step.append(step / len_)
     times.append(time_ / len_)
+    sample_length.append(sample / len_)  # block efficiency
     
     # Fix speed calculation to match eval.py
     # Speed should be: total_sample_length / total_time
@@ -111,6 +112,7 @@ speed = np.array(lens)
 
 print("\n=== Summary Statistics ===")
 print(f"Speed (tokens/s): {speed}")
+print(f"BE (Block Efficiency): {sample_length}")
 
 
 
