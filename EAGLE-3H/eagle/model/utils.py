@@ -462,17 +462,30 @@ def evaluate_posterior(
 
             if b > 0:
 
+                # def zero_after_first_zero(x):
+                #     # Create a mask for where x is zero
+                #     zero_mask = (x == 0)
+
+                #     # Find the index of the first zero in each row
+                #     first_zero_idx = zero_mask.float().cumsum(dim=1).clamp(max=1)
+
+                #     # Invert the mask so that all elements after the first zero become 0
+                #     keep_mask = (first_zero_idx == 0).float().cumsum(dim=1).clamp(max=1)
+
+                #     return x * keep_mask
+                ## faster implementation
                 def zero_after_first_zero(x):
-                    # Create a mask for where x is zero
+                    # Boolean mask of zeros
                     zero_mask = (x == 0)
-
-                    # Find the index of the first zero in each row
-                    first_zero_idx = zero_mask.float().cumsum(dim=1).clamp(max=1)
-
-                    # Invert the mask so that all elements after the first zero become 0
-                    keep_mask = (first_zero_idx == 0).float().cumsum(dim=1).clamp(max=1)
-
+                
+                    # Marks all positions at or after the first zero
+                    seen_zero = zero_mask.cummax(dim=1).values
+                
+                    # Keep only positions before the first zero
+                    keep_mask = ~seen_zero
+                
                     return x * keep_mask
+
 
                 # if not using clone this just returns a view not copy
                 p_new = p[ind:ind + 1, n_matches-1:new_candidate_length-1].clone()
@@ -527,7 +540,22 @@ def evaluate_posterior(
 
                 # p_next = new_p_previous * p_new
 
-                p_next = torch.minimum(p_previous.cumprod(-1), q_previous.cumprod(-1)).unsqueeze(-1) * p_new
+                # Compute ratio
+                ratio = joint_p_previous / joint_q_previous  # [B, K]
+                
+                # Ensure the cap is at least 1
+                ratio = torch.maximum(ratio, torch.ones_like(ratio))
+                
+                # Running maximum over prefix dimension
+                previous_max, _ = torch.cummax(ratio, dim=1)  # [B, K]
+                
+                # Cap joint probabilities
+                new_p_previous = joint_p_previous / previous_max  # [B, K]
+                
+                # Next-step probability
+                p_next = new_p_previous * p_new
+
+                # p_next = torch.minimum(p_previous.cumprod(-1), q_previous.cumprod(-1)).unsqueeze(-1) * p_new
 
             else:
                 # # for multidraft
@@ -562,8 +590,23 @@ def evaluate_posterior(
                 #     new_p_previous[:, k] = joint_p_previous[:, k] / previous_max
 
                 # p_next = new_p_previous * p[ind:ind + 1, :new_candidate_length-1]
+
+                # Compute ratio
+                ratio = joint_p_previous / joint_q_previous  # [B, K]
                 
-                p_next = torch.minimum(log_p_previous, log_q_previous) * p[ind:ind + 1, :new_candidate_length-1]
+                # Ensure the cap is at least 1
+                ratio = torch.maximum(ratio, torch.ones_like(ratio))
+                
+                # Running maximum over prefix dimension
+                previous_max, _ = torch.cummax(ratio, dim=1)  # [B, K]
+                
+                # Cap joint probabilities
+                new_p_previous = joint_p_previous / previous_max  # [B, K]
+                
+                # Next-step probability
+                p_next = new_p_previous * p[ind:ind + 1, :new_candidate_length-1]
+                
+                # p_next = torch.minimum(log_p_previous, log_q_previous) * p[ind:ind + 1, :new_candidate_length-1]
 
 
             # be careful with the positions where diffs=0
