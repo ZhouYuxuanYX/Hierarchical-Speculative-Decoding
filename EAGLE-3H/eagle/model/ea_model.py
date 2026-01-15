@@ -320,7 +320,8 @@ Compose an engaging travel blog post about a recent trip to Hawaii, highlighting
             end_time = time.perf_counter()
 
             per_length_eval_time.append(end_time - start_time)
-            per_length_accept_length.append(accept_length - discount)
+            # use +1 to include bonus token, either resampled or the extra token upon full acceptance 
+            per_length_accept_length.append(accept_length - discount + 1)
             # print(accept_length)
             # Adjusting the input sequence, draft model forward
             start_time = time.perf_counter()
