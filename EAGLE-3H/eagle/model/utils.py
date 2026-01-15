@@ -363,6 +363,7 @@ def evaluate_posterior(
     # in addition, eagle may have multiple -1 as padding, which shall not be counted as accepted tokens either
     # for a fair comparison with hsd, which already satisfy this by excluding the eos from the accepted tokens, we discount such cases for eagle baseline
     discount = 0
+    device = logits.device
     
     # Greedy decoding based on temperature value
     if logits_processor is None:
@@ -513,7 +514,7 @@ def evaluate_posterior(
 
                 # here our p_res is joint probability from 1 to n_matches, not the tokenwise probability
                 joint_q_previous = torch.exp(torch.log(q_previous).cumsum(1).unsqueeze(-1))
-                q_next = joint_q_previous * torch.nn.functional.one_hot(new_candidate_input_ids, num_classes=logits.shape[-1])
+                q_next = joint_q_previous * torch.nn.functional.one_hot(new_candidate_input_ids, num_classes=logits.shape[-1]).to(device)
 
                 # p_i has to be re-selected after normalizing p_primes
                 # p_primes has to be re-normalized after applying zero masks, before applied with p_previous
@@ -564,7 +565,7 @@ def evaluate_posterior(
                 q_previous = torch.roll(q_i, 1, 1)
                 q_previous[:, 0] = 1
                 joint_q_previous = torch.exp(torch.log(q_previous).cumsum(1).unsqueeze(-1))
-                q_next = joint_q_previous * torch.nn.functional.one_hot(new_candidate_input_ids, num_classes=logits.shape[-1])
+                q_next = joint_q_previous * torch.nn.functional.one_hot(new_candidate_input_ids, num_classes=logits.shape[-1]).to(device)
                 # else:
                 # p_i corresponds to marginal probability
                 p_i = p[ind:ind + 1, torch.arange(n_matches-1, new_candidate_length-1),
