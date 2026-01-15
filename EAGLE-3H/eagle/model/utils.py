@@ -361,8 +361,8 @@ def evaluate_posterior(
     # omit cases where -1, i.e., eos is accetped, because in this case there will be no bonus token,
     # to be consistent with hf, the n_matches/accepted tokens should be decreased by 1,
     # in addition, eagle may have multiple -1 as padding, which shall not be counted as accepted tokens either
-    # for a fair comparison with hsd, which already satisfy this by excluding the eos from the accepted tokens, we omit such cases for eagle baseline
-    omit_for_stats = False
+    # for a fair comparison with hsd, which already satisfy this by excluding the eos from the accepted tokens, we discount such cases for eagle baseline
+    discount = 0
     
     # Greedy decoding based on temperature value
     if logits_processor is None:
@@ -422,9 +422,9 @@ def evaluate_posterior(
             gt_logits = logits_processor(None, gt_logits)[0]
             sample_p = torch.softmax(gt_logits, dim=0)
             
-        if -1 in candidates[best_candidate]:
-            omit_for_stats = True
-        return torch.tensor(best_candidate), accept_length - 1, sample_p, omit_for_stats
+        discount = (candidates[best_candidate] == -1).sum().item()
+
+        return torch.tensor(best_candidate), accept_length - 1, sample_p, discount
 
     else:
         logits = logits_processor(None, logits)
