@@ -358,6 +358,12 @@ def evaluate_posterior(
     - best_candidate (torch.Tensor): Index of the chosen best candidate.
     - accept_length (int): Length of the accepted candidate sequence.
     """
+    # omit cases where -1, i.e., eos is accetped, because in this case there will be no bonus token,
+    # to be consistent with hf, the n_matches/accepted tokens should be decreased by 1,
+    # in addition, eagle may have multiple -1 as padding, which shall not be counted as accepted tokens either
+    # for a fair comparison with hsd, which already satisfy this by excluding the eos from the accepted tokens, we omit such cases for eagle baseline
+    omit_for_stats = False
+    
     # Greedy decoding based on temperature value
     if logits_processor is None:
         # Find the tokens that match the maximum logits for each position in the sequence
@@ -415,7 +421,10 @@ def evaluate_posterior(
             gt_logits = logits[best_candidate, accept_length - 1][None]
             gt_logits = logits_processor(None, gt_logits)[0]
             sample_p = torch.softmax(gt_logits, dim=0)
-        return torch.tensor(best_candidate), accept_length - 1, sample_p
+            
+        if -1 in candidates[best_candidate]:
+            omit_for_stats = True
+        return torch.tensor(best_candidate), accept_length - 1, sample_p, omit_for_stats
 
     else:
         logits = logits_processor(None, logits)
@@ -653,7 +662,7 @@ def evaluate_posterior(
         else:
             p_prime = p_n_plus_1
 
-        return ind, n_matches-1, p_prime.squeeze()
+        return ind, n_matches-1, p_prime.squeeze(), omit_for_stats
 
 @torch.no_grad()
 def update_inference_inputs(
