@@ -85,7 +85,7 @@ for count in counts:
         draft += draft_list[draft_list == gamma].sum()
         target += target_list[draft_list == gamma].sum()
         step += step_list[draft_list == gamma].sum()
-        sample += sample_list[draft_list == gamma].sum()
+        sample += sample_list.sum()
         time_ += float(count["time"][n])
         len_ += len(sample_list)
 
