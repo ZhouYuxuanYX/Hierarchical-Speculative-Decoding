@@ -30,14 +30,31 @@ except:
     from eagle.model.utils import *
 
 
+def tensor_to_python(obj):
+    """Recursively convert PyTorch tensors to Python types for JSON serialization."""
+    if obj is None:
+        return None
+    if hasattr(obj, 'item'):  # scalar tensor
+        return obj.item()
+    if hasattr(obj, 'tolist'):  # tensor with multiple elements
+        return obj.tolist()
+    if isinstance(obj, dict):
+        return {k: tensor_to_python(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [tensor_to_python(x) for x in obj]
+    return obj
+
+
 def get_system_prompt(bench_name):
     """Get appropriate system prompt based on benchmark type."""
     if bench_name == "flores200":
         return "You are a helpful translation assistant. Provide accurate and natural translations."
+    elif bench_name == "cnndailymail":
+        return "You are a helpful assistant skilled at summarizing news articles. Provide concise and accurate summaries."
     else:
         return "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\n\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."
 
-
+           
 def load_flores200_questions(question_begin=None, question_end=None, source_lang="eng_Latn", target_lang="fra_Latn"):
     """Load questions from flores200_devtest_translation_pairs dataset.
     
@@ -86,37 +103,95 @@ def load_flores200_questions(question_begin=None, question_end=None, source_lang
     return questions
 
 
-def load_gsm8k_questions(question_begin=None, question_end=None, split="test"):
-    """Load questions from GSM8K dataset from Hugging Face.
+def load_cnndailymail_questions(question_begin=None, question_end=None, max_article_chars=6000):
+    """Load questions from CNN/DailyMail dataset.
     
     Args:
         question_begin: Starting index for questions (optional)
         question_end: Ending index for questions (optional)
-        split: Dataset split to use (default: "test")
+        max_article_chars: Maximum character length for articles (default 6000 chars ≈ 1500 tokens).
+                          Articles longer than this will be truncated to avoid KV cache overflow.
     
     Returns:
         List of questions in the expected format with question_id, category, turns, and reference
     """
-    print(f"Loading GSM8K dataset (split: {split})...")
-    dataset = load_dataset("openai/gsm8k", "main", split=split)
-    print(f"Loaded {len(dataset)} questions from GSM8K {split} split")
+    # Use the test.jsonl file which has raw article and highlights
+    data_file = os.path.join(parent_dir, "data", "cnndailymail", "test.jsonl")
+    print(f"Loading CNN/DailyMail dataset from {data_file}...")
+    
+    questions = []
+    truncated_count = 0
+    with open(data_file, 'r', encoding='utf-8') as f:
+        for idx, line in enumerate(f):
+            item = json.loads(line.strip())
+            article = item['article']
+            highlights = item['highlights']
+            
+            # Truncate long articles to avoid KV cache overflow (default max is 2048 tokens)
+            # Roughly 4 chars per token, so 6000 chars ≈ 1500 tokens
+            if len(article) > max_article_chars:
+                article = article[:max_article_chars] + "..."
+                truncated_count += 1
+            
+            # Format as a summarization task
+            prompt = f"Please summarize the following news article in a few sentences:\n\n{article}"
+            
+            questions.append({
+                "question_id": idx,
+                "category": "summarization",
+                "turns": [prompt],
+                "reference": [highlights]
+            })
+    
+    print(f"Loaded {len(questions)} articles from CNN/DailyMail ({truncated_count} truncated)")
     
     # Apply question_begin and question_end
     start_idx = question_begin if question_begin is not None else 0
-    end_idx = question_end if question_end is not None else len(dataset)
+    end_idx = question_end if question_end is not None else len(questions)
+    questions = questions[start_idx:end_idx]
+    print(f"Using questions {start_idx} to {end_idx} ({len(questions)} total)")
+    
+    return questions
+
+
+def load_humaneval_questions(question_file, question_begin=None, question_end=None):
+    """Load questions from HumanEval dataset (question_2.jsonl format).
+    
+    Args:
+        question_file: Path to the question_2.jsonl file
+        question_begin: Starting index for questions (optional)
+        question_end: Ending index for questions (optional)
+    
+    Returns:
+        List of questions in the expected format with question_id, category, turns
+    """
+    print(f"Loading HumanEval dataset from {question_file}...")
     
     questions = []
-    for idx in range(start_idx, min(end_idx, len(dataset))):
-        item = dataset[idx]
-        question_text = item['question']
-        answer_text = item['answer']
-        
-        questions.append({
-            "question_id": idx,
-            "category": "gsm8k",
-            "turns": [question_text],
-            "reference": [answer_text]
-        })
+    with open(question_file, 'r', encoding='utf-8') as f:
+        for idx, line in enumerate(f):
+            item = json.loads(line.strip())
+            task_id = item['task_id']  # e.g., "HumanEval/0"
+            prompt = item['prompt']  # The code prompt to complete
+            
+            # Format as a code completion task
+            instruction = f"Complete the code I provided.\n{prompt}"
+            
+            questions.append({
+                "question_id": idx,
+                "category": "code",
+                "turns": [instruction],
+                "task_id": task_id,
+                "reference": [item.get('canonical_solution', '')]
+            })
+    
+    print(f"Loaded {len(questions)} code problems from HumanEval")
+    
+    # Apply question_begin and question_end
+    start_idx = question_begin if question_begin is not None else 0
+    end_idx = question_end if question_end is not None else len(questions)
+    questions = questions[start_idx:end_idx]
+    print(f"Using questions {start_idx} to {end_idx} ({len(questions)} total)")
     
     return questions
 
@@ -142,9 +217,10 @@ def run_eval(
         source_lang = getattr(args, 'source_lang', 'eng_Latn')
         target_lang = getattr(args, 'target_lang', 'fra_Latn')
         questions = load_flores200_questions(question_begin, question_end, source_lang, target_lang)
-    elif args.bench_name == "gsm8k":
-        gsm8k_split = getattr(args, 'gsm8k_split', 'test')
-        questions = load_gsm8k_questions(question_begin, question_end, gsm8k_split)
+    elif args.bench_name == "cnndailymail":
+        questions = load_cnndailymail_questions(question_begin, question_end)
+    elif args.bench_name == "humaneval":
+        questions = load_humaneval_questions(question_file, question_begin, question_end)
     else:
         questions = load_questions(question_file, question_begin, question_end)
     # random shuffle the questions to balance the loading
@@ -311,7 +387,10 @@ def get_model_answers(
                 "content": output
             })
     print('Warmup done')
-
+    # Print warmup speed from the last warmup run
+    # Track overall statistics for decoding speed summary
+    all_total_tokens = 0
+    all_total_time = 0.0
 
     # questions=questions[6:]
     for question in tqdm(questions):
@@ -406,18 +485,22 @@ def get_model_answers(
                     "role": "assistant",
                     "content": output
                 })
-                total_info['processor_time'].append(return_info['processor_time'])
-                total_info['kv_time'].append(return_info['kv_time'])
-                total_info['reset_tree_time'].append(return_info['reset_tree_time'])
-                total_info['tree_time'].append(return_info['tree_time'])
-                total_info['eval_time'].append(return_info['eval_time'])
-                total_info['update_time'].append(return_info['update_time'])
-                total_info['accept_length'].append(return_info['accept_length'])
-                total_info['draft_length'].append(return_info['draft_length'])
+                # Convert tensors to Python types for JSON serialization using global function
+                total_info['processor_time'].append(tensor_to_python(return_info['processor_time']))
+                total_info['kv_time'].append(tensor_to_python(return_info['kv_time']))
+                total_info['reset_tree_time'].append(tensor_to_python(return_info['reset_tree_time']))
+                total_info['tree_time'].append(tensor_to_python(return_info['tree_time']))
+                total_info['eval_time'].append(tensor_to_python(return_info['eval_time']))
+                total_info['update_time'].append(tensor_to_python(return_info['update_time']))
+                total_info['accept_length'].append(tensor_to_python(return_info['accept_length']))
+                total_info['draft_length'].append(tensor_to_python(return_info['draft_length']))
 
 
             # torch.cuda.empty_cache()
             choices.append({"index": i, "turns": turns, "idxs": idxs, "new_tokens": new_tokens, "wall_time": wall_time})
+            # Accumulate for decoding speed summary
+            all_total_tokens += sum(new_tokens)
+            all_total_time += sum(wall_time)
             question_info.append({"tokenizer_time":total_info['tokenizer_time'],
                                    "tokenizer_decode_time":total_info['tokenizer_decode_time'], 
                                    "generate_time":total_info['generate_time'],
@@ -445,8 +528,8 @@ def get_model_answers(
         os.makedirs(os.path.dirname(info_file), exist_ok=True)
         with open(os.path.expanduser(info_file), "a") as fout:
             for info in question_info:
-                fout.write(json.dumps(info) + "\n")
-
+                # Ensure all values are JSON serializable
+                fout.write(json.dumps(tensor_to_python(info)) + "\n")
 def reorg_answer_file(answer_file):
     """Sort by question id and de-duplication"""
     answers = {}
@@ -573,12 +656,6 @@ if __name__ == "__main__":
         default="deu_Latn",
         help="Target language code for flores200 translation (e.g., fra_Latn for French)",
     )
-    parser.add_argument(
-        "--gsm8k-split",
-        type=str,
-        default="test",
-        help="GSM8K dataset split to use (test or train)",
-    )
 
     # eagle: hsd + not hsd  temperate=1 top_p=1, top_k=0
 
@@ -593,7 +670,11 @@ if __name__ == "__main__":
 
         ray.init()
 
-    question_file = f"{parent_dir}/data/{args.bench_name}/question.jsonl"
+    # Use question_2.jsonl for humaneval benchmark
+    if args.bench_name == "humaneval":
+        question_file = f"{parent_dir}/data/{args.bench_name}/question_2.jsonl"
+    else:
+        question_file = f"{parent_dir}/data/{args.bench_name}/question.jsonl"
     if args.answer_file:
         answer_file = args.answer_file
     else:
