@@ -541,22 +541,22 @@ def evaluate_posterior(
 
                 # p_next = new_p_previous * p_new
 
-                # Compute ratio
-                ratio = joint_p_previous / joint_q_previous  # [B, K]
+                # # Compute ratio
+                # ratio = joint_p_previous / joint_q_previous  # [B, K]
                 
-                # Ensure the cap is at least 1
-                ratio = torch.maximum(ratio, torch.ones_like(ratio))
+                # # Ensure the cap is at least 1
+                # ratio = torch.maximum(ratio, torch.ones_like(ratio))
                 
-                # Running maximum over prefix dimension
-                previous_max, _ = torch.cummax(ratio, dim=1)  # [B, K]
+                # # Running maximum over prefix dimension
+                # previous_max, _ = torch.cummax(ratio, dim=1)  # [B, K]
                 
-                # Cap joint probabilities
-                new_p_previous = joint_p_previous / previous_max  # [B, K]
+                # # Cap joint probabilities
+                # new_p_previous = joint_p_previous / previous_max  # [B, K]
                 
-                # Next-step probability
-                p_next = new_p_previous * p_new
+                # # Next-step probability
+                # p_next = new_p_previous * p_new
 
-                # p_next = torch.minimum(p_previous.cumprod(-1), q_previous.cumprod(-1)).unsqueeze(-1) * p_new
+                p_next = torch.minimum(p_previous.cumprod(-1), q_previous.cumprod(-1)).unsqueeze(-1) * p_new
 
             else:
                 # # for multidraft
@@ -592,22 +592,22 @@ def evaluate_posterior(
 
                 # p_next = new_p_previous * p[ind:ind + 1, :new_candidate_length-1]
 
-                # Compute ratio
-                ratio = joint_p_previous / joint_q_previous  # [B, K]
+                # # Compute ratio
+                # ratio = joint_p_previous / joint_q_previous  # [B, K]
                 
-                # Ensure the cap is at least 1
-                ratio = torch.maximum(ratio, torch.ones_like(ratio))
+                # # Ensure the cap is at least 1
+                # ratio = torch.maximum(ratio, torch.ones_like(ratio))
                 
-                # Running maximum over prefix dimension
-                previous_max, _ = torch.cummax(ratio, dim=1)  # [B, K]
+                # # Running maximum over prefix dimension
+                # previous_max, _ = torch.cummax(ratio, dim=1)  # [B, K]
                 
-                # Cap joint probabilities
-                new_p_previous = joint_p_previous / previous_max  # [B, K]
+                # # Cap joint probabilities
+                # new_p_previous = joint_p_previous / previous_max  # [B, K]
                 
-                # Next-step probability
-                p_next = new_p_previous * p[ind:ind + 1, :new_candidate_length-1]
+                # # Next-step probability
+                # p_next = new_p_previous * p[ind:ind + 1, :new_candidate_length-1]
                 
-                # p_next = torch.minimum(log_p_previous, log_q_previous) * p[ind:ind + 1, :new_candidate_length-1]
+                p_next = torch.minimum(log_p_previous, log_q_previous) * p[ind:ind + 1, :new_candidate_length-1]
 
 
             # be careful with the positions where diffs=0
