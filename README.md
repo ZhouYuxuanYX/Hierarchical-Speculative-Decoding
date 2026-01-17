@@ -145,16 +145,16 @@ To demonstrate HSD’s compatibility with advanced decoding systems, we integrat
 ### **Table 3**: EAGLE-3 + HSD (EAGLE-3H) Results
 | Method               | Block Eff. | Decoding Speed |
 |----------------------|------------|----------------|
-| EAGLE-3              | 3.40       | 71.59          |
+| EAGLE-3              | 3.22       | 116.50          |
 | Blockwise            | N/A        | N/A            |
-| **EAGLE-3H (Ours)**  | **3.55 (+4.4%)** | **80.49 (+12.4%)** |
+| **EAGLE-3H (Ours)**  | **3.61 (+12.1%)** | **135.42 (+16.2%)** |
 
 
 For EAGLE integration setup, see the `EAGLE-hsd/` directory in this repo.
 
 ```bash
 cd EAGLE-3H
-bash 1114_eagle_eval.sh
+bash eagle_eval.sh
 ```
 
 ## Citation
