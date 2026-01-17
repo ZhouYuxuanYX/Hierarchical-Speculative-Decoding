@@ -150,7 +150,7 @@ To demonstrate HSD’s compatibility with advanced decoding systems, we integrat
 | **EAGLE-3H (Ours)**  | **3.55 (+4.4%)** | **80.49 (+12.4%)** |
 
 
-For EAGLE integration setup, see the [EAGLE repository](https://github.com/SforAiD/LLM-Eagle) and the `EAGLE-hsd/` directory in this repo.
+For EAGLE integration setup, see the `EAGLE-hsd/` directory in this repo.
 
 ```bash
 cd EAGLE-3H
