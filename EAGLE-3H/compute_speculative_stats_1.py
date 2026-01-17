@@ -16,6 +16,7 @@ start =time.time()
 # Load JSONL files (one JSON object per line)
 # Each line has: accept_length (list), draft_length (list), generate_time (float)
 jsonl_files = [
+    '/path/to/your/file/llama38b2_40-temperature-1.0_ea_info.jsonl',
 ]
 
 # Map each JSON file to a core index
@@ -93,8 +94,8 @@ for count in counts:
     draft_eval.append(draft / len_)
     target_eval.append(target / len_)
     total_step.append(step / len_)
-    times.append(time_ / len_)
     sample_length.append(sample / len_)  # block efficiency
+    times.append(time_ / len_)
     
     # Fix speed calculation to match eval.py
     # Speed should be: total_sample_length / total_time
