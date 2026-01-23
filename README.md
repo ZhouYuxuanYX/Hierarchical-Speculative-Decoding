@@ -73,7 +73,7 @@ Our methods:
 
 ### Multi-Draft Verification with Recursive Reject Sampling
 
-Extends HSD to use multiple independent drafts for even better performance.
+Extends HSD to use multiple independently sampled drafts for even better performance.
 
 - **Tokenwise** multidraft
   ```bash
