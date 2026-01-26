@@ -55,16 +55,7 @@ Baseline methods:
   bash eval_speculative_qwen.sh
   ```
 
-- **Blockwise** verification
-  ```bash
-  bash eval_speculative_qwen_blockwise.sh
-  ```
-
 Our methods:
-- **NaiveHSD** - basic hierarchical verification
-  ```bash
-  bash eval_speculative_qwen_backward.sh
-  ```
 
 - **HSD (clever)** - optimized with smart capping mechanism
   ```bash
