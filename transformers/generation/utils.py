@@ -4966,37 +4966,7 @@ class GenerationMixin:
                 else:
                     if do_sample and candidate_logits is not None:
 
-                        if blockwise:
-                            if return_probs:
-                                valid_tokens, n_matches, step_back_probs, p_next, q_next, ids = _speculative_sampling(
-                                    candidate_input_ids,
-                                    candidate_logits,
-                                    candidate_length,
-                                    new_logits,
-                                    is_done_candidate,
-                                    backward=backward,
-                                    blockwise=blockwise,
-                                    return_probs=True,
-                                    stop=stopping_criteria
-                                )
-                            else:
-                                valid_tokens, n_matches = _speculative_sampling(
-                                    candidate_input_ids,
-                                    candidate_logits,
-                                    candidate_length,
-                                    new_logits,
-                                    is_done_candidate,
-                                    backward=backward,
-                                    blockwise=blockwise,
-                                    stop=stopping_criteria
-                                )
-
-                        else:
-                            # print("check logits")
-                            # print(candidate_logits.shape)
-                            # print(new_logits.shape)
-
-                            valid_tokens, n_matches, selected_draft = _speculative_sampling(
+                        valid_tokens, n_matches, selected_draft = _speculative_sampling(
                                 candidate_input_ids,
                                 candidate_logits,
                                 candidate_length,
