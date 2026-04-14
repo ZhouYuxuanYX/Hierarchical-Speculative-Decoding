@@ -57,7 +57,7 @@ The evaluation uses the GSM8K test set from EAGLE3 default settings (80 samples)
 
 | Device | Method | Speed (tokens/s) | Batch Efficiency (BE) |
 |--------|--------|------------------|----------------------|
-| H100 | EAGLE | 88.10 | 3.22 |
-| H100 | HSD | **107.31** | **3.61** |
-| H200 | EAGLE | 116.50 | 3.22 |
-| H200 | HSD | **135.42** | **3.61** |
+| H100 | EAGLE3 | 88.10 | 3.22 |
+| H100 | EAGLE3H | **107.31** | **3.61** |
+| H200 | EAGLE3 | 116.50 | 3.22 |
+| H200 | EAGLE3H | **135.42** | **3.61** |
