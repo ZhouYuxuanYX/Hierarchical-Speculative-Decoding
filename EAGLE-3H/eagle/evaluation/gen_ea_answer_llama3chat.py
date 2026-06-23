@@ -153,49 +153,6 @@ def load_cnndailymail_questions(question_begin=None, question_end=None, max_arti
     
     return questions
 
-
-def load_humaneval_questions(question_file, question_begin=None, question_end=None):
-    """Load questions from HumanEval dataset (question_2.jsonl format).
-    
-    Args:
-        question_file: Path to the question_2.jsonl file
-        question_begin: Starting index for questions (optional)
-        question_end: Ending index for questions (optional)
-    
-    Returns:
-        List of questions in the expected format with question_id, category, turns
-    """
-    print(f"Loading HumanEval dataset from {question_file}...")
-    
-    questions = []
-    with open(question_file, 'r', encoding='utf-8') as f:
-        for idx, line in enumerate(f):
-            item = json.loads(line.strip())
-            task_id = item['task_id']  # e.g., "HumanEval/0"
-            prompt = item['prompt']  # The code prompt to complete
-            
-            # Format as a code completion task
-            instruction = f"Complete the code I provided.\n{prompt}"
-            
-            questions.append({
-                "question_id": idx,
-                "category": "code",
-                "turns": [instruction],
-                "task_id": task_id,
-                "reference": [item.get('canonical_solution', '')]
-            })
-    
-    print(f"Loaded {len(questions)} code problems from HumanEval")
-    
-    # Apply question_begin and question_end
-    start_idx = question_begin if question_begin is not None else 0
-    end_idx = question_end if question_end is not None else len(questions)
-    questions = questions[start_idx:end_idx]
-    print(f"Using questions {start_idx} to {end_idx} ({len(questions)} total)")
-    
-    return questions
-
-
 def run_eval(
         base_model_path,
         ea_model_path,
@@ -219,8 +176,6 @@ def run_eval(
         questions = load_flores200_questions(question_begin, question_end, source_lang, target_lang)
     elif args.bench_name == "cnndailymail":
         questions = load_cnndailymail_questions(question_begin, question_end)
-    elif args.bench_name == "humaneval":
-        questions = load_humaneval_questions(question_file, question_begin, question_end)
     else:
         questions = load_questions(question_file, question_begin, question_end)
     # random shuffle the questions to balance the loading
@@ -671,11 +626,8 @@ if __name__ == "__main__":
 
         ray.init()
 
-    # Use question_2.jsonl for humaneval benchmark
-    if args.bench_name == "humaneval":
-        question_file = f"{parent_dir}/data/{args.bench_name}/question_2.jsonl"
-    else:
-        question_file = f"{parent_dir}/data/{args.bench_name}/question.jsonl"
+    question_file = f"{parent_dir}/data/{args.bench_name}/question.jsonl"
+    
     if args.answer_file:
         answer_file = args.answer_file
     else:
