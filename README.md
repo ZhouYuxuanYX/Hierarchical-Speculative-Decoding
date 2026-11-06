@@ -40,7 +40,7 @@ HSD runs in lossless mode by default. It accepts the full draft with probability
 
 Fast mode accepts the full draft with the uncapped $\min\{r(\boldsymbol{X}_{1:\gamma}),1\}$ instead. It accepts the full draft at least as often, so it yields slightly more tokens per step, but its output deviates slightly from the target model's distribution. In exact checks on small synthetic distributions, fast mode produced 0.5–3% more tokens per step and shifted the output distribution by 0.06–0.15 in total variation distance. Enable it with `--fast` in `eval_speculative_decoding_llm.py`, or with `fast=True` in `generate`.
 
-Earlier versions of this repository always used the fast rule, because the cap was missing from the full-draft test. After updating, copy `transformers/generation/utils.py` into your `transformers` installation again.
+Earlier versions of this repository always used the fast rule, because the cap was missing from the full-draft test. Tables 1 and 2 below were measured with that earlier code, so they correspond to fast mode. After updating, copy `transformers/generation/utils.py` into your `transformers` installation again.
 
 ## Reproduce Experiment Results on GSM8K
 
@@ -161,7 +161,7 @@ To demonstrate HSD’s compatibility with advanced decoding systems, we integrat
 | **EAGLE-3H (Ours)**  | **3.61 (+12.1%)** | **135.42 (+16.2%)** |
 
 
-EAGLE-3 drafts the top-k tokens, so the draft probability of every drafted token is 1 and the cap never applies. Lossless and fast mode are therefore the same, and EAGLE-3H has no fast option. Earlier versions of EAGLE-3H carried the accepted prefix's joint probability into the next tree path, which biased the output whenever that path was verified over two or more tokens. Each path now restarts at the accepted prefix.
+EAGLE-3 drafts the top-k tokens, so the draft probability of every drafted token is 1 and the cap never applies. Lossless and fast mode are therefore the same, and EAGLE-3H has no fast option. Earlier versions of EAGLE-3H carried the accepted prefix's joint probability into the next tree path, which biased the output whenever that path was verified over two or more tokens. Each path now restarts at the accepted prefix. Table 3 was measured before this fix.
 
 For EAGLE integration setup, see the `EAGLE-hsd/` directory in this repo.
 
