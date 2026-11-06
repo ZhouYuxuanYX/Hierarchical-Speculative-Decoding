@@ -2005,6 +2005,7 @@ class GenerationMixin:
             approxi=False,
             multidraft=1,
             parallel=False,
+            fast=False,
             multigen=1,
             **kwargs,
     ) -> Union[GenerateOutput, torch.LongTensor]:
@@ -2303,6 +2304,7 @@ class GenerationMixin:
                 approxi=approxi,
                 multidraft=multidraft,
                 parallel=parallel,
+                fast=fast,
                 **model_kwargs,
             )
         elif generation_mode == GenerationMode.DOLA_GENERATION:
@@ -4570,6 +4572,7 @@ class GenerationMixin:
             approxi=False,
             multidraft=1,
             parallel=False,
+            fast=False,
             **model_kwargs,
     ) -> Union[GenerateNonBeamOutput, torch.LongTensor]:
         r"""
@@ -4921,6 +4924,7 @@ class GenerationMixin:
                                 approxi=approxi,
                                 multidraft=multidraft,
                                 parallel=parallel,
+                                fast=fast,
                                 stop=stopping_criteria
                             )
                         else:
@@ -4937,6 +4941,7 @@ class GenerationMixin:
                                 approxi=approxi,
                                 multidraft=multidraft,
                                 parallel=parallel,
+                                fast=fast,
                                 stop=stopping_criteria
                             )
                     # for the case when only 1 token left to reach max_new_tokens, the candidate logits will be None for _speculative_sampling (defined in the "get_candidates()" function in candidate_generator.py),
@@ -5253,6 +5258,7 @@ def _speculative_sampling(
         approxi=False,
         multidraft=1,
         parallel=False,
+        fast=False,
         stop=None,
 ):
     """
@@ -5522,10 +5528,14 @@ def _speculative_sampling(
             # than the model probability for the same token"), keep the token. Otherwise reject with p = 1 - probability_ratio
             # (= keep with p = probability_ratio). Keep all the tokens until the first rejection
 
+            # Eq. 19: accept the full draft with min(r*, 1), where r* is the joint ratio divided by its running
+            # maximum over the shorter prefixes. Fast mode keeps the uncapped min(r, 1): it accepts the full
+            # draft more often, but the output no longer follows the target distribution exactly.
+            if not fast:
+                probability_ratio = probability_ratio / previous_max
+
             r_i = torch.rand_like(probability_ratio)
             is_accepted = r_i <= probability_ratio
-
-
 
             # only decide to accept or not at the last position based on the joint probability ratio
             # assign 0 to all positions when the full draft is rejected, otherwise assign 1 to the rest of the positions

@@ -11,6 +11,7 @@ Moreover, its strong explainability and generality make it readily integrable in
   - [Experiment Settings](#experiment-settings)
     - [Experiments Setup](#experiments-setup)
     - [Baselines and Metrics](#baselines-and-metrics)
+  - [Lossless and Fast Modes](#lossless-and-fast-modes)
   - [Reproduce Experiment Results on GSM8K](#reproduce-experiment-results-on-gsm8k)
     - [Requirements](#requirements)
     - [Single-Draft Verification](#single-draft-verification)
@@ -33,6 +34,13 @@ We compare two lossless verification methods—Token-wise [Leviathan et al., 202
 - **Block Efficiency** measures the average tokens generated per serial call to the target model, reflecting intrinsic efficiency independent of hardware.  
 - **Decoding Speed** indicates tokens produced per second for practical reference, though it depends on hardware and implementation.
 
+## Lossless and Fast Modes
+
+HSD runs in lossless mode by default. It accepts the full draft with probability $\min\{r^*(\boldsymbol{X}_{1:\gamma}),1\}$ (Eq. 19), where the capped ratio $r^*$ divides the joint ratio $r(\boldsymbol{X}_{1:\gamma})$ by its largest value over the shorter prefixes. The output then follows the target model's distribution exactly.
+
+Fast mode accepts the full draft with the uncapped $\min\{r(\boldsymbol{X}_{1:\gamma}),1\}$ instead. It accepts the full draft at least as often, so it yields slightly more tokens per step, but its output deviates slightly from the target model's distribution. In exact checks on small synthetic distributions, fast mode produced 0.5–3% more tokens per step and shifted the output distribution by 0.06–0.15 in total variation distance. Enable it with `--fast` in `eval_speculative_decoding_llm.py`, or with `fast=True` in `generate`.
+
+Earlier versions of this repository always used the fast rule, because the cap was missing from the full-draft test. After updating, copy `transformers/generation/utils.py` into your `transformers` installation again.
 
 ## Reproduce Experiment Results on GSM8K
 
@@ -62,6 +70,11 @@ Our methods:
   bash eval_speculative_qwen_backward_clever.sh
   ```
 
+- **HSD (clever), fast mode** - uncapped full-draft test, not lossless (see [Lossless and Fast Modes](#lossless-and-fast-modes))
+  ```bash
+  python3 eval_speculative_decoding_llm.py --backward --speculative --clever --fast
+  ```
+
 ### Multi-Draft Verification with Recursive Reject Sampling
 
 Extends HSD to use multiple independently sampled drafts for even better performance.
@@ -75,6 +88,13 @@ Extends HSD to use multiple independently sampled drafts for even better perform
   ```bash
   bash eval_speculative_qwen_backward_clever_multidraft_11.sh
   ```
+
+- **HSD** multidraft, fast mode
+  ```bash
+  python3 eval_speculative_decoding_llm.py --backward --speculative --clever --multidraft 11 --parallel --fast
+  ```
+
+Fast-mode runs save their results with `_fast` in the file name.
 
 ### Compute Metrics
 

@@ -8,11 +8,13 @@ def _speculative_sampling(
         is_done_candidate,
         backward=False,
         return_probs=False,
+        fast=False,
 ):
     q = candidate_logits.softmax(dim=-1).double() if "mps" not in str(
         candidate_logits.device) else candidate_logits.softmax(dim=-1)
     p = new_logits.softmax(dim=-1).double() if "mps" not in str(new_logits.device) else new_logits.softmax(dim=-1)
 
+    new_candidate_input_ids = candidate_input_ids[:, -candidate_length:]
     q_i = q[:, torch.arange(candidate_length), new_candidate_input_ids].squeeze(1)
 
     q_previous = torch.roll(q_i, 1, 1)
@@ -22,7 +24,7 @@ def _speculative_sampling(
 
 
     # p_i corresponds to marginal probability
-    p_i = p[:, torch.arange(hist_length, candidate_length), new_candidate_input_ids].squeeze(1)     
+    p_i = p[:, torch.arange(candidate_length), new_candidate_input_ids].squeeze(1)
     p_previous = torch.roll(p_i, 1, 1)
     p_previous[:, 0] = 1
 
@@ -34,8 +36,8 @@ def _speculative_sampling(
     new_p_previous = torch.ones_like(joint_p_previous).to(joint_p_previous.device)
     for k in range(candidate_length):
         if ratio[:, k] > previous_max:
-                previous_max = ratio[:, k]
-                new_p_previous[:, k] = joint_p_previous[:, k] / previous_max
+            previous_max = ratio[:, k]
+        new_p_previous[:, k] = joint_p_previous[:, k] / previous_max
     p_next = new_p_previous * p[:, :candidate_length]
 
     # compute divergence for accept and resample probability
@@ -67,6 +69,12 @@ def _speculative_sampling(
     # apply cumprod on the ratio instead of the raw probabilities to avoid underflow
     probability_ratio = (p_i / q_i).cumprod(1).unsqueeze(-1)
 
+    # Eq. 19: accept the full draft with min(r*, 1), where r* is the joint ratio divided by its running
+    # maximum over the shorter prefixes. Fast mode keeps the uncapped min(r, 1): it accepts the full
+    # draft more often, but the output no longer follows the target distribution exactly.
+    if not fast:
+        probability_ratio = probability_ratio / previous_max
+
     # compute the accept probability for t=gamma
     r_i = torch.rand_like(probability_ratio)
     is_accepted = r_i <= probability_ratio
@@ -81,7 +89,7 @@ def _speculative_sampling(
 
     
     # for clever, p_prime (regard previous ratio as 1) could be 0, it means p=q, and we don't need to resample
-    if is_done_candidate[ind:ind+1] and n_matches == candidate_length:
+    if is_done_candidate and n_matches == candidate_length:
             # Output length is assumed to be `n_matches + 1`. Since we won't generate another token with the target model
             # due to acceptance on EOS we fix `n_matches`
             n_matches -= 1
@@ -96,10 +104,10 @@ def _speculative_sampling(
             p_prime = p_prime.div(p_prime.sum())
         else:
             p_prime = p_n_plus_1
+        t = torch.multinomial(p_prime, num_samples=1)
 
         if n_matches > 0 and n_matches<candidate_length:
             valid_tokens = candidate_input_ids[:, -candidate_length:n_matches-candidate_length]
-            t = torch.multinomial(p_prime, num_samples=1)
             valid_tokens = torch.cat((valid_tokens, t), dim=-1)
         else:
             if n_matches==0:

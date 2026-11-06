@@ -30,6 +30,8 @@ parser.add_argument('--blockwise', action='store_true', default=False)
 parser.add_argument('--recursive', action='store_true', default=False)
 parser.add_argument('--speculative', action='store_true', default=False)
 parser.add_argument('--parallel', action='store_true', default=False)
+parser.add_argument('--fast', action='store_true', default=False,
+                    help='HSD fast mode: uncapped full-draft test, accepts more but is not lossless')
 parser.add_argument('--gamma',  default=10, type=int, help='number of assited tokens')
 parser.add_argument("--approxi", action='store_true', default=False)
 parser.add_argument('--model', help='must be target or draft', default="target")
@@ -456,6 +458,7 @@ if args.debug:
                               # stopping_criteria=stopping_criteria,
                               assistant_confidence_threshold=0,
                               backward=args.backward,
+                              fast=args.fast,
                               recursive=args.recursive,
                               assistant_tokenizer=tokenizer1 if not same_tokenizer else None,
                               tokenizer=tokenizer1
@@ -586,6 +589,8 @@ else:
                 sd += "_clever"
                 if args.approxi:
                     sd+="_approxi"
+            if args.fast:
+                sd += "_fast"
 
     else:
         sd += args.model
@@ -658,7 +663,8 @@ else:
                                                   clever=args.clever,
                                                   approxi=args.approxi,
                                                   multidraft=args.multidraft,
-                                                  parallel= args.parallel
+                                                  parallel= args.parallel,
+                                                  fast=args.fast
                                                   )
 
                 total_counts["draft_eval"].append(counts["draft_eval"])
