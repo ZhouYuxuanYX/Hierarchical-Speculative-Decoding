@@ -77,7 +77,7 @@ Our methods:
 
 ### Multi-Draft Verification with Recursive Reject Sampling
 
-Extends HSD to use multiple independently sampled drafts for even better performance.
+Extends HSD to use multiple independently sampled drafts for even better performance. Each later draft restarts the joint ratio at the accepted prefix, as in Algorithm 3. Earlier versions carried the previous draft's prefix ratio over, which also biased the output slightly.
 
 - **Tokenwise** multidraft
   ```bash
@@ -160,6 +160,8 @@ To demonstrate HSD’s compatibility with advanced decoding systems, we integrat
 | Blockwise            | N/A        | N/A            |
 | **EAGLE-3H (Ours)**  | **3.61 (+12.1%)** | **135.42 (+16.2%)** |
 
+
+EAGLE-3 drafts the top-k tokens, so the draft probability of every drafted token is 1 and the cap never applies. Lossless and fast mode are therefore the same, and EAGLE-3H has no fast option. Earlier versions of EAGLE-3H carried the accepted prefix's joint probability into the next tree path, which biased the output whenever that path was verified over two or more tokens. Each path now restarts at the accepted prefix.
 
 For EAGLE integration setup, see the `EAGLE-hsd/` directory in this repo.
 

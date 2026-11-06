@@ -486,9 +486,11 @@ def evaluate_posterior(
 
                 q_i = torch.ones(1, new_candidate_length-n_matches).to(logits.device)
                 q_previous = torch.roll(q_i, 1, 1)
-                q_previous[:, 0] = log_q_previous[:, current_step_match]
+                # restart the joint ratio at the accepted prefix; carrying the previous path's prefix
+                # probability into this path biases the output whenever it verifies two or more tokens
+                q_previous[:, 0] = 1
 
-                # here our p_res is joint probability from 1 to n_matches, not the tokenwise probability
+                # joint q of this path's tokens after the accepted prefix (1 for top-k drafts)
                 log_q_previous = torch.exp(torch.log(q_previous).cumsum(1).unsqueeze(-1))
                 q_next = log_q_previous * torch.nn.functional.one_hot(new_candidate_input_ids, num_classes=logits.shape[-1])
 
@@ -496,7 +498,7 @@ def evaluate_posterior(
                 # p_primes has to be re-normalized after applying zero masks, before applied with p_previous
 
                 p_previous = torch.roll(p_i, 1, 1)
-                p_previous[:, 0] = log_p_previous[:, current_step_match]
+                p_previous[:, 0] = 1
 
                 # p_primes doesn't sum to one, because they are just sub-branches of the full joint distribution tree
                 # i have to normalize them to sum=1 when treating as marginal probabilities, just as when i do the resampling during forward sampling

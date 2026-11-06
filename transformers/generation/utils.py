@@ -5336,9 +5336,11 @@ def _speculative_sampling(
                 q_i = q[ind:ind + 1, torch.arange(n_matches, candidate_length), new_candidate_input_ids].squeeze(1)
 
                 q_previous = torch.roll(q_i, 1, 1)
-                q_previous[:, 0] = joint_q_previous[:, current_step_match]
+                # restart the joint ratio at the accepted prefix (Algorithm 3); carrying the previous
+                # draft's prefix ratio into this draft biases the output distribution
+                q_previous[:, 0] = 1
 
-                # here our p_res is joint probability from 1 to n_matches, not the tokenwise probability
+                # joint q of this draft's tokens after the accepted prefix
                 joint_q_previous = torch.exp(torch.log(q_previous).cumsum(1).unsqueeze(-1))
                 q_next = joint_q_previous * q[ind:ind + 1, n_matches:candidate_length]
 
@@ -5346,7 +5348,7 @@ def _speculative_sampling(
                 # p_primes has to be re-normalized after applying zero masks, before applied with p_previous
 
                 p_previous = torch.roll(p_i, 1, 1)
-                p_previous[:, 0] = joint_p_previous[:, current_step_match]
+                p_previous[:, 0] = 1
 
                 # p_primes doesn't sum to one, because they are just sub-branches of the full joint distribution tree
                 # i have to normalize them to sum=1 when treating as marginal probabilities, just as when i do the resampling during forward sampling
