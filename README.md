@@ -2,51 +2,36 @@
 
 **Hierarchical Speculative Decoding (HSD)** is a lossless verification algorithm for speculative decoding. It verifies a draft through the joint probability of its tokens and reconstructs the target model's distribution with a hierarchy of resampling distributions over branches, so the output follows the target model exactly.
 
-For a single draft, HSD's lossless rule is the same rule as block verification ([Sun et al., 2024](https://arxiv.org/abs/2403.10444)): both accept every prefix of the draft with the same probability and resample from the same residual, so they accept the same number of tokens in expectation. The paper states this comparison as an inequality; it is an equality (see [Corrections](#corrections)).
+For a single draft, HSD's lossless rule is the same rule as block verification ([Sun et al., 2024](https://arxiv.org/abs/2403.10444)): both accept every prefix of the draft with the same probability and resample from the same residual, so they accept the same number of tokens in expectation. The paper states this comparison as an inequality; it is an equality (see [Single draft: HSD and block verification coincide](#single-draft-hsd-and-block-verification-coincide)).
 
-HSD reaches this rule from a different direction. It starts from the probability mass that each branch is missing or has in excess, and balances the two across branches. This gives an explicit residual distribution at every position of the draft, and the same residuals carry over to settings that block verification does not cover: several drafts verified in turn (Algorithm 3) and draft trees. On sampled draft trees for EAGLE-3, tree HSD accepts 0.5–3.3% more draft tokens per step than recursive rejection sampling on the same trees, and the best sampled-tree setup decodes 9.0% faster than EAGLE-3 with its default tree (see [Sampled Draft Trees for EAGLE-3](#sampled-draft-trees-for-eagle-3)).
+HSD reaches this rule from a different direction. It starts from the probability mass that each branch is missing or has in excess, and balances the two across branches. This gives an explicit residual distribution at every position of the draft, and the same residuals carry over to settings that block verification does not cover: several drafts verified in turn (Algorithm 3) and draft trees. On sampled draft trees for EAGLE-3, tree HSD accepts 0.5–3.3% more draft tokens per step than recursive rejection sampling on the same trees, and the best sampled-tree setup decodes 9.0% faster than EAGLE-3 with its default tree (see [EAGLE-3](#eagle-3)).
+
+## What changed in this revision
+
+This revision corresponds to arXiv v3 of the paper and brings the code and the README in line with the theory. The algorithms in the paper (Algorithms 2 and 3) were already lossless; the deviations were in the released implementation. Concretely:
+
+- **Theorem 7 is strengthened.** The paper stated $`\mathbb{E}[\tau]_{\text{branch}} \geq \mathbb{E}[\tau]_{\text{block}} \geq \mathbb{E}[\tau]_{\text{token}}`$. The first inequality is an equality for every draft length $`\gamma`$; the previous remark that equality holds only for $`\gamma = 1`$ was removed. See the proof below and Appendix D.2/Appendix I of the paper.
+- **Single-draft numbers are relabelled.** Tables 1 and 2 in this README were measured with the earlier implementation, whose full-draft test was not lossless. They are the **fast mode** numbers. Lossless single-draft HSD matches block verification, so its expected block efficiency is the Blockwise row.
+- **Multi-draft numbers are not re-run.** Table 2's multi-draft results were measured with the earlier implementation (uncapped full-draft test plus the prefix carry-over). We have not re-run them with the corrected code; exact checks on small distributions are in [Multiple drafts](#multiple-drafts).
+- **The EAGLE-3H numbers are gone.** EAGLE-3 drafts by top-k, so no lossless verifier can beat token-wise verification in expectation; the EAGLE-3H results in earlier README versions were measured before these fixes and were misleading. They are replaced by HSD on sampled EAGLE-3 draft trees ([EAGLE-3](#eagle-3)).
 
 ## Table of Contents
 
-- [Corrections](#corrections)
-- [Experiment Settings](#experiment-settings)
+- [Single draft: HSD and block verification coincide](#single-draft-hsd-and-block-verification-coincide)
 - [Lossless and Fast Modes](#lossless-and-fast-modes)
-- [Reproduce Experiment Results on GSM8K](#reproduce-experiment-results-on-gsm8k)
-- [EAGLE Integration](#eagle-integration)
+- [Single-draft results in the paper](#single-draft-results-in-the-paper)
+- [Multiple drafts](#multiple-drafts)
+- [EAGLE-3](#eagle-3)
 - [Sampled Draft Trees for EAGLE-3](#sampled-draft-trees-for-eagle-3)
+- [Reproduce the GSM8K experiments](#reproduce-the-gsm8k-experiments)
 - [Citation](#citation)
 - [References](#references)
 
-## Corrections
+## Single draft: HSD and block verification coincide
 
-### Single draft: HSD and block verification coincide
-
-Theorem 7 of the paper states $`\mathbb{E}[\tau]_{\text{branch}} \geq \mathbb{E}[\tau]_{\text{block}} \geq \mathbb{E}[\tau]_{\text{token}}`$. The first inequality is an equality for every draft length $`\gamma`$.
-
-Write $`r_i`$ for the ratio $`p/q`$ of the $`i`$-th draft token and $`R_t = r_1 \cdots r_t`$, with $`R_0 = 1`$. Block verification keeps $`p_t = \min\{p_{t-1} r_t, 1\}`$, and by Lemma 11, $`p_t = \min\{1, r_t, r_{t-1} r_t, \dots, r_1 \cdots r_t\} = R_t / \max_{0 \le s \le t} R_s`$. HSD's capped ratio $`r^*(\boldsymbol{X}_{1:t})`$ (Definition 5) divides $`R_t`$ by the running maximum over the shorter prefixes: it is $`\min\{r(\boldsymbol{X}_{1:m}), 1\} \cdot r(\boldsymbol{X}_{m+1:t})`$, where $`m`$ is the shorter prefix at which $`R`$ is largest. So $`\min\{r^*(\boldsymbol{X}_{1:t}), 1\} = p_t`$. Substituting this into Eq. 19 gives $`h_t = h_t^{\text{block}}`$ at every position, and the residual in Eq. 20 is the distribution block verification resamples from. In the comparison in Appendix D.2, the step $`\min\{r(x_{t+1}), r(\boldsymbol{X}_{t:t+1}), \dots, r(\boldsymbol{X}_{1:t+1})\} \le r(\boldsymbol{X}_{m+1:t+1})`$ holds with equality for the same reason, so no strict gain can follow from it.
+Write $`r_i`$ for the ratio $`p/q`$ of the $`i`$-th draft token and $`R_t = r_1 \cdots r_t`$, with $`R_0 = 1`$. Block verification keeps $`p_t = \min\{p_{t-1} r_t, 1\}`$, and by Lemma 11 of the paper, $`p_t = \min\{1, r_t, r_{t-1} r_t, \dots, r_1 \cdots r_t\} = R_t / \max_{0 \le s \le t} R_s`$. HSD's capped ratio $`r^*(\boldsymbol{X}_{1:t})`$ (Definition 5) divides $`R_t`$ by the running maximum over the shorter prefixes: it is $`\min\{r(\boldsymbol{X}_{1:m}), 1\} \cdot r(\boldsymbol{X}_{m+1:t})`$, where $`m`$ is the shorter prefix at which $`R`$ is largest. So $`\min\{r^*(\boldsymbol{X}_{1:t}), 1\} = p_t`$. Substituting this into Eq. 19 of the paper gives $`h_t = h_t^{\text{block}}`$ at every position, and the residual in Eq. 20 is the distribution block verification resamples from. In the comparison in Appendix D.2, the step $`\min\{r(x_{t+1}), r(\boldsymbol{X}_{t:t+1}), \dots, r(\boldsymbol{X}_{1:t+1})\} \le r(\boldsymbol{X}_{m+1:t+1})`$ holds with equality for the same reason, so no strict gain can follow from it.
 
 `tree-hsd/verify_hsd_exact.py` checks this by enumerating every draft on small random target and draft distributions (7 configurations, 20 seeds each, draft lengths 2–4). The acceptance probabilities of Eq. 19 and of block verification differ by at most 1.5e-12 and the residuals by at most 6e-15; both reproduce the target distribution to within 4e-16 in total variation distance and give identical expected tokens per step.
-
-### Single-draft results in Tables 1 and 2
-
-These were measured with the earlier code, which tested the full draft with the uncapped ratio. That rule is now fast mode and is not lossless; see [Lossless and Fast Modes](#lossless-and-fast-modes). In lossless mode, single-draft HSD accepts as many tokens as block verification, i.e. the Blockwise row of Table 2.
-
-### Multiple drafts
-
-Each later draft now restarts the joint ratio at the accepted prefix, as in Algorithm 3. Earlier versions carried the previous draft's prefix ratio over, which biased the output slightly.
-
-### EAGLE-3H
-
-EAGLE-3 drafts the top-k tokens, so every drafted token has draft probability 1. With such deterministic drafts, at any sampling temperature, no lossless verifier can accept a drafted prefix more often than the target model would generate it, and token-wise verification already reaches that bound, so HSD cannot add accepted tokens. Earlier versions of EAGLE-3H also carried the accepted prefix's joint probability into the next tree path, which biased the output. The EAGLE-3H results in earlier versions of this README were measured before these fixes and have been removed. HSD improves EAGLE-3 once the draft tree is sampled; see [EAGLE Integration](#eagle-integration).
-
-## Experiment Settings
-### Experiments Setup
-Experiments are conducted with the widely adopted GPTQ-quantized 8-bit instruction-tuned Qwen2.5 series [Bai et al., 2023](#). By default, we employ the 0.5B model as the draft model and 72B as the target model, with a temperature of 1. All experiments were conducted on a single NVIDIA H20 GPU with 96 GB of memory, unless otherwise specified.
-
-### Baselines and Metrics
-We compare two lossless verification methods—Token-wise [Leviathan et al., 2023](https://arxiv.org/abs/2211.17192) and Block-wise [Sun et al., 2024](https://arxiv.org/abs/2403.10444)—using two metrics: *Block Efficiency* (tokens/step) and *Decoding Speed* (tokens/second).
-- **Block Efficiency** measures the average tokens generated per serial call to the target model, reflecting intrinsic efficiency independent of hardware.  
-- **Decoding Speed** indicates tokens produced per second for practical reference, though it depends on hardware and implementation.
 
 ## Lossless and Fast Modes
 
@@ -54,118 +39,48 @@ HSD runs in lossless mode by default. It accepts the full draft with probability
 
 Fast mode accepts the full draft with the uncapped $`\min\{r(\boldsymbol{X}_{1:\gamma}),1\}`$ instead. It accepts the full draft at least as often, so it yields slightly more tokens per step, but its output deviates slightly from the target model's distribution. In exact checks on small synthetic distributions, fast mode produced 0.5–3% more tokens per step and shifted the output distribution by 0.06–0.15 in total variation distance. Enable it with `--fast` in `eval_speculative_decoding_llm.py`, or with `fast=True` in `generate`.
 
-Earlier versions of this repository always used the fast rule, because the cap was missing from the full-draft test. Tables 1 and 2 below were measured with that earlier code, so they correspond to fast mode. After updating, copy `transformers/generation/utils.py` into your `transformers` installation again.
+Earlier versions of this repository always used the fast rule, because the cap was missing from the full-draft test. Lossless is now the default; fast-mode runs save their results with `_fast` in the file name.
 
-## Reproduce Experiment Results on GSM8K
+## Single-draft results in the paper
 
-### Requirements
-Please install `python=3.10` and `transformers=4.46.3`, then copy the provided files under the `transformers` directory to:
+The HSD rows in the paper's Table 1 and Table 3 (a)/(b), and the figure of average acceptance probabilities, were measured with the earlier code, i.e. in fast mode. On GSM8K with Qwen2.5-0.5B as the draft model:
 
-```
-anaconda3/envs/your_environment_name/lib/python3.10/site-packages/transformers/
-```
-Then navigate to `chain-of-thought-hub/gsm8k`:
-```bash
-cd chain-of-thought-hub/gsm8k
-```
-
-### Single-Draft Verification
-
-Baseline methods:
-- **Tokenwise** verification
-  ```bash
-  bash eval_speculative_qwen.sh
-  ```
-
-Our methods:
-
-- **HSD (clever)** - optimized with smart capping mechanism
-  ```bash
-  bash eval_speculative_qwen_backward_clever.sh
-  ```
-
-- **HSD (clever), fast mode** - uncapped full-draft test, not lossless (see [Lossless and Fast Modes](#lossless-and-fast-modes))
-  ```bash
-  python3 eval_speculative_decoding_llm.py --backward --speculative --clever --fast
-  ```
-
-### Multi-Draft Verification with Recursive Reject Sampling
-
-Extends HSD to use multiple independently sampled drafts for even better performance. Each later draft restarts the joint ratio at the accepted prefix, as in Algorithm 3. Earlier versions carried the previous draft's prefix ratio over, which also biased the output slightly.
-
-- **Tokenwise** multidraft
-  ```bash
-  bash eval_speculative_qwen_multidraft_11.sh
-  ```
-
-- **HSD** multidraft
-  ```bash
-  bash eval_speculative_qwen_backward_clever_multidraft_11.sh
-  ```
-
-- **HSD** multidraft, fast mode
-  ```bash
-  python3 eval_speculative_decoding_llm.py --backward --speculative --clever --multidraft 11 --parallel --fast
-  ```
-
-Fast-mode runs save their results with `_fast` in the file name.
-
-### Compute Metrics
-
-Finally, evaluate Block Efficiency and Decoding Speed:
-```bash
-python compute_speculative_stats.py
-```
-
-### GSM8K Performance Results
-
-Using Qwen2.5-0.5B as draft model on GSM8K:
-
-#### **Table 1**: Accuracy Comparison
+#### Table 1: Accuracy comparison (fast mode)
 
 <table>
   <thead>
-    <tr>
-      <th>Target Model</th>
-      <th>Tokenwise</th>
-      <th>HSD (ours)</th>
-    </tr>
+    <tr><th>Target Model</th><th>Tokenwise</th><th>HSD (ours)</th></tr>
   </thead>
   <tbody>
-    <tr>
-      <td>Qwen2.5-72B</td>
-      <td>0.8213</td>
-      <td><strong>0.8517</strong></td>
-    </tr>
-    <tr>
-      <td>Qwen2.5-32B</td>
-      <td>0.8213</td>
-      <td><strong>0.8479</strong></td>
-    </tr>
-    <tr>
-      <td>Qwen2.5-14B</td>
-      <td>0.8327</td>
-      <td><strong>0.8327</strong></td>
-    </tr>
+    <tr><td>Qwen2.5-72B</td><td>0.8213</td><td><strong>0.8517</strong></td></tr>
+    <tr><td>Qwen2.5-32B</td><td>0.8213</td><td><strong>0.8479</strong></td></tr>
+    <tr><td>Qwen2.5-14B</td><td>0.8327</td><td><strong>0.8327</strong></td></tr>
   </tbody>
 </table>
 
 The HSD column was measured with the earlier code, i.e. in fast mode, which does not preserve the target distribution exactly, so the differences between the columns should not be read as an accuracy gain.
-#### **Table 2**: Block Efficiency & Speed 
-| Method         | BE 14B | BE 32B | BE 72B | DS 14B | DS 32B | DS 72B |
-|----------------|--------|--------|--------|--------|--------|--------|
-| Tokenwise      | 5.99   | 6.14   | 6.44   | 82.28  | 53.87  | 31.49  |
-| Blockwise      | 6.13 (+2.3%) | 6.26 (+2.0%) | 6.53 (+1.4%) | 86.06 (+4.6%) | 54.91 (+1.9%) | 31.79 (+1.0%) |
+
+#### Table 2: Block efficiency and decoding speed (fast mode)
+
+| Method | BE 14B | BE 32B | BE 72B | DS 14B | DS 32B | DS 72B |
+|---|---|---|---|---|---|---|
+| Tokenwise | 5.99 | 6.14 | 6.44 | 82.28 | 53.87 | 31.49 |
+| Blockwise | 6.13 (+2.3%) | 6.26 (+2.0%) | 6.53 (+1.4%) | 86.06 (+4.6%) | 54.91 (+1.9%) | 31.79 (+1.0%) |
 | **HSD (Ours)** | **6.30 (+5.2%)** | **6.47 (+5.4%)** | **6.65 (+3.3%)** | **91.05 (+10.7%)** | **57.12 (+6.0%)** | **32.52 (+3.3%)** |
 
+The HSD row was measured with the earlier code, i.e. in fast mode, where it improved BE by 3.3%–5.4% and DS by up to 10.7% over Tokenwise. In lossless mode, single-draft HSD is the same rule as block verification, so its expected BE is that of the Blockwise row: **1.4%–2.3% above Tokenwise** (on average 3.1% block efficiency and 3.0% decoding speed across the paper's Table 1). The margins over Blockwise in the fast-mode rows come from the uncapped test and from run-to-run variation.
 
-The HSD row was measured with the earlier code, i.e. in fast mode, where it improved BE by 3.3%–5.4% and DS by up to 10.7% over Tokenwise. Lossless single-draft HSD is the same rule as block verification (see [Corrections](#corrections)), so its expected BE is that of the Blockwise row: 1.4%–2.3% above Tokenwise.
+## Multiple drafts
 
-## EAGLE Integration
+Algorithm 3 extends HSD to several independently sampled drafts: each later draft restarts the joint ratio at the accepted prefix, and the drafts are verified in turn. Earlier versions carried the previous draft's prefix ratio over, which biased the output slightly; the released code now follows Algorithm 3. The multi-draft results in the paper (Table 2) were measured with the earlier implementation, and we have not re-run them with the corrected code.
 
-HSD can be integrated with [EAGLE-3](https://github.com/SforAiD/LLM-Eagle). EAGLE-3 fine-tunes an additional component to predict draft tokens from the target model's hidden features, eliminating the need for a separate draft model and thereby improving decoding speed. HSD operates orthogonally to the drafting phase, so it works with a pre-fine-tuned EAGLE-3 model **without any additional fine-tuning**.
+`tree-hsd/verify_alg3_exact.py` checks the corrected rule exactly on small synthetic distributions (2 or 3 independent drafts of length 2 or 3): the corrected Algorithm 3 reproduces the target distribution to within 5e-16 in total variation distance and accepts 0.3–3.3% more tokens per step than recursive rejection sampling with replacement. The earlier implementation accepted 1.1–3.2% more tokens per step than the corrected one and deviated from the target distribution by 0.09–0.26 in total variation distance, almost entirely because of the uncapped full-draft test; the carried-over ratio alone accounts for at most 0.02.
 
-What HSD needs from the drafter is sampled drafts. EAGLE-3 drafts its tree by top-k, so every drafted token has draft probability 1, and with such deterministic drafts no lossless verifier accepts more tokens than token-wise verification (see [Corrections](#corrections)). We therefore let EAGLE-3's draft head sample its tree and compare tree HSD with recursive rejection sampling without replacement (RRSw), the usual lossless verifier for sampled draft trees, on the same trees. Tree HSD accepts more tokens than RRSw on every tree shape we tried, and with the fused verifier it is the fastest setup we tried: on Llama-3.1-8B-Instruct it decodes 2.9% faster than RRSw on the same tree shape and 9.0% faster than EAGLE-3 with its default tree. The setup and all numbers are in [Sampled Draft Trees for EAGLE-3](#sampled-draft-trees-for-eagle-3), and the code is in [`tree-hsd/`](tree-hsd/README.md).
+## EAGLE-3
+
+EAGLE-3 fine-tunes an additional component to predict draft tokens from the target model's hidden features, eliminating the need for a separate draft model. HSD operates orthogonally to the drafting phase, so it works with a pre-fine-tuned EAGLE-3 model **without any additional fine-tuning**.
+
+What HSD needs from the drafter is sampled drafts. EAGLE-3 drafts its tree by top-k, so every drafted token has draft probability 1, and with such deterministic drafts, at any sampling temperature, no lossless verifier accepts a drafted prefix more often than the target model would generate it: token-wise verification already reaches that bound. We therefore let EAGLE-3's draft head sample its tree and compare tree HSD with recursive rejection sampling without replacement (RRSw), the usual lossless verifier for sampled draft trees, on the same trees. Tree HSD accepts more tokens than RRSw on every tree shape we tried, and with the fused verifier it is the fastest setup we tried: on Llama-3.1-8B-Instruct it decodes 2.9% faster than RRSw on the same tree shape and 9.0% faster than EAGLE-3 with its default tree. The setup and all numbers are in [Sampled Draft Trees for EAGLE-3](#sampled-draft-trees-for-eagle-3), and the code is in [`tree-hsd/`](tree-hsd/README.md).
 
 `EAGLE-3H/` keeps the integration with EAGLE-3's top-k trees, where HSD replaces the token-wise verifier:
 
@@ -173,6 +88,8 @@ What HSD needs from the drafter is sampled drafts. EAGLE-3 drafts its tree by to
 cd EAGLE-3H
 bash eagle_eval.sh
 ```
+
+With the default top-k trees, EAGLE-3H accepts the same number of tokens per step as EAGLE-3 in expectation; the speed difference, if any, comes from the implementation, not from the acceptance rule.
 
 ## Sampled Draft Trees for EAGLE-3
 
@@ -206,7 +123,7 @@ EAGLE-3's default tree has 10 children per node and depth 5 and is pruned to 59 
 | hybrid, spine 4 levels longer | RRSw | 4.67 (+10.6%) | −2.4% |
 | hybrid, spine 4 levels longer | tree HSD | **4.93 (+16.8%)** | +3.0% |
 
-Tree HSD runs with one Triton kernel per verified path (`hsd_fused`); its verification takes 0.77 ms per step, against 0.81 ms for RRSw and 1.68 ms for EAGLE-3's verification. On the hybrid tree it is ahead of EAGLE-3 by 6.9% (95% CI +3.5% to +10.4%) in block efficiency and by 9.0% (+5.6% to +12.5%) in decoding speed. Against RRSw on the same tree shape it adds 2.9% in block efficiency (+1.1% to +4.7%) and 2.9% in decoding speed (+1.2% to +4.7%); the rest of the gain over EAGLE-3 comes from sampling the tree and from cheaper verification.
+Tree HSD runs with one Triton kernel per verified path (`hsd_fused`); its verification takes 0.77 ms per step, against 0.81 ms for RRSw and 1.68 ms for EAGLE-3's verification. On the hybrid tree it is ahead of EAGLE-3 by 6.9% (95% CI +3.5% to +10.4%) in block efficiency and by 9.0% (+5.6% to +12.5%) in decoding speed. Against RRSw on the same tree shape it adds 2.9% in block efficiency (+1.1% to +4.7%) and 2.9% in decoding speed (+1.2% to +4.7%). The rest of the gain over EAGLE-3 comes from sampling the tree and from cheaper verification: sampled RRSw is already 6.0% faster than EAGLE-3, of which about 2 points come from the tensorized verifier (0.81 ms per step instead of 1.68 ms) and the rest from the sampled tree shape.
 
 The spine is the path tree HSD verifies first, and making it longer widens HSD's lead. With 4 more levels, RRSw gains nothing over 2 more levels (4.67 tokens per step either way), while tree HSD goes from 4.77 to 4.93 and leads RRSw by 5.6% (+3.5% to +7.8%) in block efficiency and 5.5% (+3.4% to +7.7%) in speed. Each extra level costs one more forward pass of the draft head, about 1.5 ms per step in this implementation, so the longer spines are not faster than the plain hybrid tree here. With a cheaper draft pass the longer spine could come out ahead; we have not measured that.
 
@@ -239,6 +156,58 @@ Speed is relative to token-wise verification at draft length 5. The gain of bloc
 
 Tables 3 and 4 can be reproduced with [`tree-hsd/`](tree-hsd/README.md). Table 5 uses SGLang's server flags `--speculative-algorithm EAGLE3 --speculative-eagle-topk 1 --speculative-num-steps N --speculative-num-draft-tokens N+1 --speculative-use-rejection-sampling`, plus `--speculative-use-block-verification` for block verification; sampling the drafts of an EAGLE-3 head with a reduced draft vocabulary needs [sgl-project/sglang#40893](https://github.com/sgl-project/sglang/pull/40893).
 
+## Reproduce the GSM8K experiments
+
+### Requirements
+
+Install `python=3.10` and `transformers=4.46.3`, then copy the provided files under the `transformers` directory into your `transformers` installation, e.g.:
+
+```
+anaconda3/envs/your_environment_name/lib/python3.10/site-packages/transformers/
+```
+
+Then navigate to `chain-of-thought-hub/gsm8k`:
+
+```bash
+cd chain-of-thought-hub/gsm8k
+```
+
+### Single-draft verification
+
+Baseline:
+
+```bash
+bash eval_speculative_qwen.sh
+```
+
+HSD (lossless):
+
+```bash
+bash eval_speculative_qwen_backward_clever.sh
+```
+
+HSD in fast mode (uncapped full-draft test, not lossless):
+
+```bash
+python3 eval_speculative_decoding_llm.py --backward --speculative --clever --fast
+```
+
+### Multi-draft verification
+
+Each later draft restarts the joint ratio at the accepted prefix, as in Algorithm 3.
+
+```bash
+bash eval_speculative_qwen_multidraft_11.sh        # tokenwise multidraft
+bash eval_speculative_qwen_backward_clever_multidraft_11.sh   # HSD multidraft
+python3 eval_speculative_decoding_llm.py --backward --speculative --clever --multidraft 11 --parallel --fast   # fast mode
+```
+
+### Compute metrics
+
+```bash
+python compute_speculative_stats.py
+```
+
 ## Citation
 
 ```bibtex
@@ -259,4 +228,3 @@ Tables 3 and 4 can be reproduced with [`tree-hsd/`](tree-hsd/README.md). Table 5
 2. [EAGLE-3 Repository](https://github.com/SforAiD/LLM-Eagle)
 3. [Block Verification Accelerates Speculative Decoding (Sun et al., 2024)](https://arxiv.org/abs/2403.10444)
 4. [SGLang](https://github.com/sgl-project/sglang)
-
