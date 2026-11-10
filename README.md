@@ -181,7 +181,7 @@ HSD only adds accepted tokens when the drafts are sampled from the draft distrib
 - **RRSw**: token-level recursive rejection sampling without replacement, the multi-draft form of token-wise verification.
 - **Tree HSD**: block-verify the path from a child down its first-drawn children with HSD's rule; if the walk stops at a node, continue with that node's next child under the residual of the stop position.
 
-Both are exact: `tree-hsd/verify_sampled_tree_wor.py` reproduces the target distribution by enumeration to within 3e-15 in total variation distance.
+Both are exact: `tree-hsd/verify_sampled_tree_wor.py` reproduces the target distribution by enumeration on the four tree shapes used below (sampled, with a spine, and with the spine extended by 1 or 2 levels); the maximum total-variation distance to the target is 4.7e-15.
 
 ### Setup
 
