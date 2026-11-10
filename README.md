@@ -21,9 +21,9 @@ HSD reaches this rule from a different direction. It starts from the probability
 
 ### Single draft: HSD and block verification coincide
 
-Theorem 7 of the paper states $\mathbb{E}[\tau]_{\text{branch}} \geq \mathbb{E}[\tau]_{\text{block}} \geq \mathbb{E}[\tau]_{\text{token}}$. The first inequality is an equality for every draft length $\gamma$.
+Theorem 7 of the paper states $`\mathbb{E}[\tau]_{\text{branch}} \geq \mathbb{E}[\tau]_{\text{block}} \geq \mathbb{E}[\tau]_{\text{token}}`$. The first inequality is an equality for every draft length $`\gamma`$.
 
-Write $r_i$ for the ratio $p/q$ of the $i$-th draft token and $R_t = r_1 \cdots r_t$, with $R_0 = 1$. Block verification keeps $p_t = \min\{p_{t-1} r_t, 1\}$, and by Lemma 11, $p_t = \min\{1, r_t, r_{t-1} r_t, \dots, r_1 \cdots r_t\} = R_t / \max_{0 \le s \le t} R_s$. HSD's capped ratio $r^*(\boldsymbol{X}_{1:t})$ (Definition 5) divides $R_t$ by the running maximum over the shorter prefixes: it is $\min\{r(\boldsymbol{X}_{1:m}), 1\} \cdot r(\boldsymbol{X}_{m+1:t})$, where $m$ is the shorter prefix at which $R$ is largest. So $\min\{r^*(\boldsymbol{X}_{1:t}), 1\} = p_t$. Substituting this into Eq. 19 gives $h_t = h_t^{\text{block}}$ at every position, and the residual in Eq. 20 is the distribution block verification resamples from. In the comparison in Appendix D.2, the step $\min\{r(x_{t+1}), r(\boldsymbol{X}_{t:t+1}), \dots, r(\boldsymbol{X}_{1:t+1})\} \le r(\boldsymbol{X}_{m+1:t+1})$ holds with equality for the same reason, so no strict gain can follow from it.
+Write $`r_i`$ for the ratio $`p/q`$ of the $`i`$-th draft token and $`R_t = r_1 \cdots r_t`$, with $`R_0 = 1`$. Block verification keeps $`p_t = \min\{p_{t-1} r_t, 1\}`$, and by Lemma 11, $`p_t = \min\{1, r_t, r_{t-1} r_t, \dots, r_1 \cdots r_t\} = R_t / \max_{0 \le s \le t} R_s`$. HSD's capped ratio $`r^*(\boldsymbol{X}_{1:t})`$ (Definition 5) divides $`R_t`$ by the running maximum over the shorter prefixes: it is $`\min\{r(\boldsymbol{X}_{1:m}), 1\} \cdot r(\boldsymbol{X}_{m+1:t})`$, where $`m`$ is the shorter prefix at which $`R`$ is largest. So $`\min\{r^*(\boldsymbol{X}_{1:t}), 1\} = p_t`$. Substituting this into Eq. 19 gives $`h_t = h_t^{\text{block}}`$ at every position, and the residual in Eq. 20 is the distribution block verification resamples from. In the comparison in Appendix D.2, the step $`\min\{r(x_{t+1}), r(\boldsymbol{X}_{t:t+1}), \dots, r(\boldsymbol{X}_{1:t+1})\} \le r(\boldsymbol{X}_{m+1:t+1})`$ holds with equality for the same reason, so no strict gain can follow from it.
 
 `tree-hsd/verify_hsd_exact.py` checks this by enumerating every draft on small random target and draft distributions (7 configurations, 20 seeds each, draft lengths 2–4). The acceptance probabilities of Eq. 19 and of block verification differ by at most 1.5e-12 and the residuals by at most 6e-15; both reproduce the target distribution to within 4e-16 in total variation distance and give identical expected tokens per step.
 
@@ -50,9 +50,9 @@ We compare two lossless verification methods—Token-wise [Leviathan et al., 202
 
 ## Lossless and Fast Modes
 
-HSD runs in lossless mode by default. It accepts the full draft with probability $\min\{r^*(\boldsymbol{X}_{1:\gamma}),1\}$ (Eq. 19), where the capped ratio $r^*$ divides the joint ratio $r(\boldsymbol{X}_{1:\gamma})$ by its largest value over the shorter prefixes. The output then follows the target model's distribution exactly.
+HSD runs in lossless mode by default. It accepts the full draft with probability $`\min\{r^*(\boldsymbol{X}_{1:\gamma}),1\}`$ (Eq. 19), where the capped ratio $`r^*`$ divides the joint ratio $`r(\boldsymbol{X}_{1:\gamma})`$ by its largest value over the shorter prefixes. The output then follows the target model's distribution exactly.
 
-Fast mode accepts the full draft with the uncapped $\min\{r(\boldsymbol{X}_{1:\gamma}),1\}$ instead. It accepts the full draft at least as often, so it yields slightly more tokens per step, but its output deviates slightly from the target model's distribution. In exact checks on small synthetic distributions, fast mode produced 0.5–3% more tokens per step and shifted the output distribution by 0.06–0.15 in total variation distance. Enable it with `--fast` in `eval_speculative_decoding_llm.py`, or with `fast=True` in `generate`.
+Fast mode accepts the full draft with the uncapped $`\min\{r(\boldsymbol{X}_{1:\gamma}),1\}`$ instead. It accepts the full draft at least as often, so it yields slightly more tokens per step, but its output deviates slightly from the target model's distribution. In exact checks on small synthetic distributions, fast mode produced 0.5–3% more tokens per step and shifted the output distribution by 0.06–0.15 in total variation distance. Enable it with `--fast` in `eval_speculative_decoding_llm.py`, or with `fast=True` in `generate`.
 
 Earlier versions of this repository always used the fast rule, because the cap was missing from the full-draft test. Tables 1 and 2 below were measured with that earlier code, so they correspond to fast mode. After updating, copy `transformers/generation/utils.py` into your `transformers` installation again.
 
@@ -176,7 +176,7 @@ bash eagle_eval.sh
 
 ## Sampled Draft Trees for EAGLE-3
 
-HSD only adds accepted tokens when the drafts are sampled from the draft distribution, since only then do the ratios $p/q$ carry information a verifier can use. `tree-hsd/` makes EAGLE-3's draft head sample its tree: every expanded node draws its children from the draft distribution without replacement, and no node is pruned afterwards. Two lossless verifiers run on these trees:
+HSD only adds accepted tokens when the drafts are sampled from the draft distribution, since only then do the ratios $`p/q`$ carry information a verifier can use. `tree-hsd/` makes EAGLE-3's draft head sample its tree: every expanded node draws its children from the draft distribution without replacement, and no node is pruned afterwards. Two lossless verifiers run on these trees:
 
 - **RRSw**: token-level recursive rejection sampling without replacement, the multi-draft form of token-wise verification.
 - **Tree HSD**: block-verify the path from a child down its first-drawn children with HSD's rule; if the walk stops at a node, continue with that node's next child under the residual of the stop position.
