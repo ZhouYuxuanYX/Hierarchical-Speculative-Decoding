@@ -37,7 +37,7 @@ Each later draft now restarts the joint ratio at the accepted prefix, as in Algo
 
 ### EAGLE-3H
 
-EAGLE-3 drafts the top-k tokens, so every drafted token has draft probability 1. With such deterministic drafts, no lossless verifier can accept a drafted prefix more often than the target model would generate it, and token-wise verification already reaches that bound, so HSD cannot add accepted tokens. Earlier versions of EAGLE-3H also carried the accepted prefix's joint probability into the next tree path, which biased the output. The EAGLE-3H results in earlier versions of this README were measured before these fixes and have been removed. After the fixes, EAGLE-3H accepts as many tokens per step as EAGLE-3 (−0.7%, 95% CI −4.7% to +3.7%, with the [setup](#setup) of the sampled-tree experiments). HSD improves EAGLE-3 once the draft tree is sampled; see [EAGLE Integration](#eagle-integration).
+EAGLE-3 drafts the top-k tokens, so every drafted token has draft probability 1. With such deterministic drafts, at any sampling temperature, no lossless verifier can accept a drafted prefix more often than the target model would generate it, and token-wise verification already reaches that bound, so HSD cannot add accepted tokens. Earlier versions of EAGLE-3H also carried the accepted prefix's joint probability into the next tree path, which biased the output. The EAGLE-3H results in earlier versions of this README were measured before these fixes and have been removed. HSD improves EAGLE-3 once the draft tree is sampled; see [EAGLE Integration](#eagle-integration).
 
 ## Experiment Settings
 ### Experiments Setup
