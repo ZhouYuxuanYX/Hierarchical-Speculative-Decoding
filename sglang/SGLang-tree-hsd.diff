@@ -1,0 +1,1139 @@
+diff --git a/python/sglang/kernels/ops/speculative/sampled_tree_verify.py b/python/sglang/kernels/ops/speculative/sampled_tree_verify.py
+new file mode 100644
+index 0000000000..79b3c36e11
+--- /dev/null
++++ b/python/sglang/kernels/ops/speculative/sampled_tree_verify.py
+@@ -0,0 +1,387 @@
++"""Lossless verifiers for sampled draft trees: tree HSD and RRSw.
++
++The draft tree must be sampled: every expanded node draws its ``topk`` children from
++its draft distribution q without replacement, the children are linked through
++``retrive_next_sibling`` in draw order, and no drawn node is pruned. Node ``n``'s
++children were drawn from ``draft_probs[(retrive_next_token[n] - 1) // topk]``, which
++holds as long as children of one node occupy one aligned ``topk`` block of the
++flattened draft list, as in EAGLE's tree.
++
++Both verifiers walk the tree from the root, keeping the current node ``u``, the
++target-side distribution ``R`` at ``u`` and the proposal ``q_u`` with the tried
++children removed. From child ``c`` of ``u`` they take the path ``c``, first child of
++``c``, ... (RRSw: ``c`` alone) and block-verify it (Sun et al., 2024, Algorithm 2),
++with ``R`` / ``q_u`` at its first position:
++
++- the whole path with probability rho_g;
++- otherwise a backward scan stops at position j with probability
++  h_j = S_j / (S_j + 1 - rho_j), S_j = sum_v (rho_j p_j(v) - q_j(v))_+;
++- a stop at j >= 1 keeps the path's first j nodes and goes on at node j - 1 with
++  ``R = norm((rho_j p_j - q_j)_+)``, its first child tried; a stop at 0 replaces
++  ``R`` with ``norm((R - q_u)_+)`` and tries the next child of ``u``.
++
++The bonus token is drawn from ``R`` when the walk runs out of children. With paths
++of one node this is token-level recursive rejection sampling without replacement
++(RRSw); with first-child paths it is HSD Algorithm 3 on the tree
++(https://arxiv.org/abs/2601.05724).
++"""
++
++import torch
++import triton
++import triton.language as tl
++
++
++@triton.jit
++def _copy_row(dst, src, VOCAB_SIZE: tl.constexpr, BLOCK_V: tl.constexpr):
++    total = 0.0
++    for v_start in range(0, VOCAB_SIZE, BLOCK_V):
++        offs = v_start + tl.arange(0, BLOCK_V)
++        mask = offs < VOCAB_SIZE
++        val = tl.load(src + offs, mask=mask, other=0.0)
++        tl.store(dst + offs, val, mask=mask)
++        total += tl.sum(val)
++    tl.debug_barrier()
++    return total
++
++
++@triton.jit
++def _residual_mass(
++    p_row, q_row, rho, q_scale, VOCAB_SIZE: tl.constexpr, BLOCK_V: tl.constexpr
++):
++    """sum_v (rho * p(v) - q_scale * q(v))_+."""
++    total = 0.0
++    for v_start in range(0, VOCAB_SIZE, BLOCK_V):
++        offs = v_start + tl.arange(0, BLOCK_V)
++        mask = offs < VOCAB_SIZE
++        p = tl.load(p_row + offs, mask=mask, other=0.0)
++        q = tl.load(q_row + offs, mask=mask, other=0.0)
++        total += tl.sum(tl.maximum(rho * p - q_scale * q, 0.0))
++    return total
++
++
++@triton.jit
++def _write_residual(
++    dst,
++    p_row,
++    q_row,
++    rho,
++    q_scale,
++    inv_norm,
++    VOCAB_SIZE: tl.constexpr,
++    BLOCK_V: tl.constexpr,
++):
++    """dst = (rho * p - q_scale * q)_+ * inv_norm; dst may alias p_row."""
++    for v_start in range(0, VOCAB_SIZE, BLOCK_V):
++        offs = v_start + tl.arange(0, BLOCK_V)
++        mask = offs < VOCAB_SIZE
++        p = tl.load(p_row + offs, mask=mask, other=0.0)
++        q = tl.load(q_row + offs, mask=mask, other=0.0)
++        val = tl.maximum(rho * p - q_scale * q, 0.0) * inv_norm
++        tl.store(dst + offs, val, mask=mask)
++    tl.debug_barrier()
++
++
++@triton.jit
++def _remove_token(prop, x):
++    """Zero prop[x] and return its old value, the same in every thread."""
++    removed = tl.load(prop + x)
++    # One thread stores; the others must have read the old value first.
++    tl.debug_barrier()
++    tl.store(prop + x, 0.0)
++    tl.debug_barrier()
++    return removed
++
++
++@triton.jit
++def _sample_row(row, coin, VOCAB_SIZE: tl.constexpr, BLOCK_V: tl.constexpr):
++    """Inverse-CDF draw from the unnormalized row."""
++    total = 0.0
++    for v_start in range(0, VOCAB_SIZE, BLOCK_V):
++        offs = v_start + tl.arange(0, BLOCK_V)
++        total += tl.sum(tl.load(row + offs, mask=offs < VOCAB_SIZE, other=0.0))
++    target_u = coin * total
++    cum_sum = 0.0
++    token = VOCAB_SIZE - 1
++    found = 0
++    for v_start in range(0, VOCAB_SIZE, BLOCK_V):
++        if found == 0:
++            offs = v_start + tl.arange(0, BLOCK_V)
++            val = tl.load(row + offs, mask=offs < VOCAB_SIZE, other=0.0)
++            above = (cum_sum + tl.cumsum(val, axis=0)) > target_u
++            if tl.max(above, axis=0):
++                token = v_start + tl.argmax(above.to(tl.int32), axis=0)
++                found = 1
++            cum_sum += tl.sum(val)
++    return token
++
++
++@triton.jit
++def sampled_tree_verify_kernel(
++    Predicts,
++    AcceptIndex,
++    AcceptTokenNum,
++    Candidates,
++    RetriveIndex,
++    RetriveNextToken,
++    RetriveNextSibling,
++    UniformSamples,
++    UniformSamplesFinal,
++    TargetProbs,
++    DraftProbs,
++    ResidualScratch,
++    ProposalScratch,
++    PathScratch,
++    RhoScratch,
++    stride_acc_b,
++    stride_uni_b,
++    stride_uni_n,
++    stride_tp_b,
++    stride_tp_n,
++    stride_dp_b,
++    stride_dp_r,
++    NUM_NODES: tl.constexpr,
++    TOPK: tl.constexpr,
++    MAX_PATH: tl.constexpr,
++    VOCAB_SIZE: tl.constexpr,
++    BLOCK_V: tl.constexpr,
++    USE_HSD: tl.constexpr,
++):
++    # Candidates, RetriveIndex/NextToken/NextSibling: int32 [bs, NUM_NODES], contiguous.
++    # TargetProbs [bs, NUM_NODES, vocab]; DraftProbs [bs, num_expanded, vocab]; unit
++    # vocab stride. UniformSamples [bs, NUM_NODES, MAX_PATH + 1]: coin j of the path
++    # that starts at node n is [n, j]; every node starts at most one path.
++    pid = tl.program_id(0).to(tl.int64)
++    cand = Candidates + pid * NUM_NODES
++    ridx = RetriveIndex + pid * NUM_NODES
++    first_child = RetriveNextToken + pid * NUM_NODES
++    next_sibling = RetriveNextSibling + pid * NUM_NODES
++    tp = TargetProbs + pid * stride_tp_b
++    dp = DraftProbs + pid * stride_dp_b
++    uni = UniformSamples + pid * stride_uni_b
++    res = ResidualScratch + pid * VOCAB_SIZE
++    prop = ProposalScratch + pid * VOCAB_SIZE
++    path = PathScratch + pid * (MAX_PATH + 1)
++    rho = RhoScratch + pid * (MAX_PATH + 1)
++
++    last_global = tl.load(ridx)
++    tl.store(AcceptIndex + pid * stride_acc_b, last_global)
++    num_accept = 0
++
++    # Walk state: R (res), q_u with tried children zeroed (prop, sum prop_mass).
++    _copy_row(res, tp, VOCAB_SIZE, BLOCK_V)
++    prop_mass = _copy_row(prop, dp, VOCAB_SIZE, BLOCK_V)
++    child = tl.load(first_child)
++    walking = 1
++    while walking == 1:
++        if child < 0:
++            walking = 0
++        else:
++            # The path from child down first children; it ends early where a
++            # "child" is not a real draw (q == 0: q had fewer than topk tokens).
++            # Scratch written here is read back only after the barrier below: a
++            # scalar store comes from one thread, so other threads may not see it yet.
++            g = 0
++            node = child
++            prev = child.to(tl.int64)
++            rho_val = 1.0
++            tl.store(rho, rho_val)
++            while node >= 0:
++                x = tl.load(cand + node)
++                if g == 0:
++                    p_x = tl.load(res + x)
++                    q_x = tl.load(prop + x) / prop_mass
++                else:
++                    q_row = (tl.load(first_child + prev) - 1) // TOPK
++                    p_x = tl.load(tp + prev * stride_tp_n + x)
++                    q_x = tl.load(dp + q_row.to(tl.int64) * stride_dp_r + x)
++                if q_x > 0.0:
++                    tl.store(path + g, node)
++                    rho_val = tl.minimum(rho_val * p_x / q_x, 1.0)
++                    g += 1
++                    tl.store(rho + g, rho_val)
++                    prev = node.to(tl.int64)
++                    node = tl.load(first_child + node) if USE_HSD else -1
++                    if g == MAX_PATH:
++                        node = -1
++                else:
++                    node = -1
++            tl.debug_barrier()
++
++            if g == 0:
++                walking = 0
++            else:
++                coin_row = uni + child.to(tl.int64) * stride_uni_n
++                stop = -1
++                stop_mass = 0.0
++                if tl.load(coin_row + g) < rho_val:
++                    stop = g
++                j = g - 1
++                while (stop < 0) & (j >= 1):
++                    rho_j = tl.load(rho + j)
++                    if rho_j >= 1.0:
++                        stop = j
++                    else:
++                        coin = tl.load(coin_row + j)
++                        # h_j <= rho_j, so only a coin below rho_j needs S_j.
++                        if coin < rho_j:
++                            w = tl.load(path + j - 1).to(tl.int64)
++                            q_row = (tl.load(first_child + w) - 1) // TOPK
++                            mass = _residual_mass(
++                                tp + w * stride_tp_n,
++                                dp + q_row.to(tl.int64) * stride_dp_r,
++                                rho_j,
++                                1.0,
++                                VOCAB_SIZE,
++                                BLOCK_V,
++                            )
++                            if coin * (mass + 1.0 - rho_j) < mass:
++                                stop = j
++                                stop_mass = mass
++                    j -= 1
++                if stop < 0:
++                    stop = 0
++
++                for m in range(0, stop):
++                    node = tl.load(path + m)
++                    tl.store(Predicts + last_global, tl.load(cand + node))
++                    last_global = tl.load(ridx + node)
++                    num_accept += 1
++                    tl.store(
++                        AcceptIndex + pid * stride_acc_b + num_accept, last_global
++                    )
++
++                if stop == g:
++                    # Whole path: continue at its last node, R = p after it.
++                    u = tl.load(path + g - 1).to(tl.int64)
++                    _copy_row(res, tp + u * stride_tp_n, VOCAB_SIZE, BLOCK_V)
++                    child = tl.load(first_child + u)
++                    if child >= 0:
++                        q_row = (child - 1) // TOPK
++                        prop_mass = _copy_row(
++                            prop,
++                            dp + q_row.to(tl.int64) * stride_dp_r,
++                            VOCAB_SIZE,
++                            BLOCK_V,
++                        )
++                elif stop >= 1:
++                    w = tl.load(path + stop - 1).to(tl.int64)
++                    q_row = (tl.load(first_child + w) - 1) // TOPK
++                    q_ptr = dp + q_row.to(tl.int64) * stride_dp_r
++                    rho_j = tl.load(rho + stop)
++                    if rho_j >= 1.0:  # a certain stop skipped S_j above
++                        stop_mass = _residual_mass(
++                            tp + w * stride_tp_n, q_ptr, rho_j, 1.0, VOCAB_SIZE, BLOCK_V
++                        )
++                    if stop_mass > 0.0:
++                        _write_residual(
++                            res,
++                            tp + w * stride_tp_n,
++                            q_ptr,
++                            rho_j,
++                            1.0,
++                            1.0 / stop_mass,
++                            VOCAB_SIZE,
++                            BLOCK_V,
++                        )
++                    else:
++                        _copy_row(res, tp + w * stride_tp_n, VOCAB_SIZE, BLOCK_V)
++                    stop_node = tl.load(path + stop)
++                    x_stop = tl.load(cand + stop_node)
++                    prop_mass = _copy_row(prop, q_ptr, VOCAB_SIZE, BLOCK_V)
++                    prop_mass -= _remove_token(prop, x_stop)
++                    child = tl.load(next_sibling + stop_node)
++                else:
++                    q_scale = 1.0 / prop_mass
++                    mass = _residual_mass(res, prop, 1.0, q_scale, VOCAB_SIZE, BLOCK_V)
++                    if mass > 0.0:
++                        _write_residual(
++                            res, res, prop, 1.0, q_scale, 1.0 / mass, VOCAB_SIZE, BLOCK_V
++                        )
++                    x0 = tl.load(cand + child)
++                    prop_mass -= _remove_token(prop, x0)
++                    child = tl.load(next_sibling + child)
++
++    tl.store(AcceptTokenNum + pid, num_accept)
++    coin_final = tl.load(UniformSamplesFinal + pid)
++    tl.store(Predicts + last_global, _sample_row(res, coin_final, VOCAB_SIZE, BLOCK_V))
++
++
++def sampled_tree_verify(
++    predicts: torch.Tensor,  # mutable, [bs * num_nodes]
++    accept_index: torch.Tensor,  # mutable, [bs, max_path + 1]
++    accept_token_num: torch.Tensor,  # mutable, [bs]
++    candidates: torch.Tensor,
++    retrive_index: torch.Tensor,
++    retrive_next_token: torch.Tensor,
++    retrive_next_sibling: torch.Tensor,
++    uniform_samples: torch.Tensor,
++    uniform_samples_for_final_sampling: torch.Tensor,
++    target_probs: torch.Tensor,
++    draft_probs: torch.Tensor,
++    threshold_single=None,  # unused: lossless only, like the chain sampler
++    threshold_acc=None,  # unused
++    deterministic=None,  # unused
++    *,
++    topk: int,
++    use_hsd: bool,
++) -> None:
++    """Verify sampled draft trees with tree HSD (``use_hsd``) or RRSw.
++
++    ``candidates`` / ``retrive_*``: [bs, num_nodes], node 0 is the root (the last
++    committed token). ``target_probs``: [bs, num_nodes, vocab], row n is the target
++    distribution after node n. ``draft_probs``: [bs, num_expanded, vocab], row
++    (first_child(n) - 1) // topk is the distribution node n's children were drawn
++    from. ``uniform_samples``: [bs, num_nodes, max_path + 1] with
++    max_path = accept_index.shape[1] - 1.
++    """
++    batch_size, num_nodes = candidates.shape
++    vocab_size = target_probs.shape[-1]
++    max_path = accept_index.shape[1] - 1
++    assert uniform_samples.shape == (batch_size, num_nodes, max_path + 1)
++    assert target_probs.stride(-1) == 1 and draft_probs.stride(-1) == 1
++    device = target_probs.device
++
++    def as_int32(t):
++        return t.to(torch.int32).contiguous()
++
++    residual_scratch = torch.empty(
++        (batch_size, vocab_size), dtype=torch.float32, device=device
++    )
++    proposal_scratch = torch.empty_like(residual_scratch)
++    path_scratch = torch.empty(
++        (batch_size, max_path + 1), dtype=torch.int32, device=device
++    )
++    rho_scratch = torch.empty(
++        (batch_size, max_path + 1), dtype=torch.float32, device=device
++    )
++    sampled_tree_verify_kernel[(batch_size,)](
++        predicts,
++        accept_index,
++        accept_token_num,
++        as_int32(candidates),
++        as_int32(retrive_index),
++        as_int32(retrive_next_token),
++        as_int32(retrive_next_sibling),
++        uniform_samples,
++        uniform_samples_for_final_sampling,
++        target_probs,
++        draft_probs,
++        residual_scratch,
++        proposal_scratch,
++        path_scratch,
++        rho_scratch,
++        accept_index.stride(0),
++        uniform_samples.stride(0),
++        uniform_samples.stride(1),
++        target_probs.stride(0),
++        target_probs.stride(1),
++        draft_probs.stride(0),
++        draft_probs.stride(1),
++        NUM_NODES=num_nodes,
++        TOPK=topk,
++        MAX_PATH=max_path,
++        VOCAB_SIZE=vocab_size,
++        BLOCK_V=4096 if vocab_size >= 4096 else triton.next_power_of_2(vocab_size),
++        USE_HSD=use_hsd,
++        num_warps=8,
++    )
+diff --git a/python/sglang/kernels/ops/speculative/verify_sampling.py b/python/sglang/kernels/ops/speculative/verify_sampling.py
+index 655d21cd3c..f1632ccc0c 100644
+--- a/python/sglang/kernels/ops/speculative/verify_sampling.py
++++ b/python/sglang/kernels/ops/speculative/verify_sampling.py
+@@ -14,10 +14,12 @@ if is_npu():
+     except ImportError:
+         chain_speculative_sampling_triton = None
+         tree_speculative_sampling_target_only = None
++    sampled_tree_verify = None
+ else:
+     from sglang.kernels.ops.speculative.reject_sampling import (
+         chain_speculative_sampling_triton,
+     )
++    from sglang.kernels.ops.speculative.sampled_tree_verify import sampled_tree_verify
+ 
+     if is_cuda():
+         from sglang.kernels.ops.speculative.sampling import (
+@@ -31,4 +33,8 @@ else:
+     else:
+         tree_speculative_sampling_target_only = None
+ 
+-__all__ = ["chain_speculative_sampling_triton", "tree_speculative_sampling_target_only"]
++__all__ = [
++    "chain_speculative_sampling_triton",
++    "sampled_tree_verify",
++    "tree_speculative_sampling_target_only",
++]
+diff --git a/python/sglang/srt/arg_groups/field_order.py b/python/sglang/srt/arg_groups/field_order.py
+index 4c7360a1d1..0655428bcb 100644
+--- a/python/sglang/srt/arg_groups/field_order.py
++++ b/python/sglang/srt/arg_groups/field_order.py
+@@ -576,5 +576,6 @@ POSITIONAL_FIELD_ORDER = (
+     "enable_flashmla_prefill_token_packing",
+     "decode_state_free_radix_default",
+     "gc_freeze_on_idle_secs",
++    "speculative_use_hsd",
+ )
+ # fmt: on
+diff --git a/python/sglang/srt/arg_groups/fields/spec.py b/python/sglang/srt/arg_groups/fields/spec.py
+index 844dc73008..7c80c653e5 100644
+--- a/python/sglang/srt/arg_groups/fields/spec.py
++++ b/python/sglang/srt/arg_groups/fields/spec.py
+@@ -115,7 +115,19 @@ class Spec(msgspec.Struct):
+         "The accept probability of a draft token is raised from its target probability p to min(1, p / threshold_acc).",
+     ] = 1.0
+     speculative_use_rejection_sampling: A[
+-        bool, "Use rejection sampling for speculative decoding (requires topk=1)."
++        bool,
++        "Use rejection sampling for speculative decoding. With "
++        "--speculative-eagle-topk > 1 (EAGLE/EAGLE3) the draft tree is sampled "
++        "without replacement and verified by recursive rejection sampling (RRSw); "
++        "the tree must not be pruned: --speculative-num-draft-tokens "
++        "= 1 + topk + (num_steps - 1) * topk^2.",
++    ] = False
++    speculative_use_hsd: A[
++        bool,
++        "Verify with Hierarchical Speculative Decoding (HSD) for EAGLE/EAGLE3, "
++        "lossless; implies --speculative-use-rejection-sampling. With topk=1 this "
++        "is block verification (single-draft HSD); with topk > 1 it is tree HSD on "
++        "a sampled draft tree (see --speculative-use-rejection-sampling).",
+     ] = False
+     speculative_use_block_verification: A[
+         bool,
+diff --git a/python/sglang/srt/arg_groups/speculative_hook.py b/python/sglang/srt/arg_groups/speculative_hook.py
+index a878f66eed..ff72a6c9da 100644
+--- a/python/sglang/srt/arg_groups/speculative_hook.py
++++ b/python/sglang/srt/arg_groups/speculative_hook.py
+@@ -205,6 +205,19 @@ def handle_speculative_decoding(server_args: ServerArgs) -> None:
+                 speculative_use_rejection_sampling=True,
+             )
+ 
++    if cfg.speculative_use_hsd:
++        if cfg.speculative_algorithm not in ("EAGLE", "EAGLE3"):
++            raise ValueError("--speculative-use-hsd only supports EAGLE / EAGLE3 / NEXTN.")
++        if cfg.device != "cuda":
++            raise ValueError("--speculative-use-hsd only supports CUDA or ROCm.")
++        # HSD verifies sampled drafts against their full proposal distributions;
++        # whether that is a chain or a tree is decided once topk is resolved.
++        declare_resolution(
++            server_args,
++            "handle_speculative_decoding",
++            speculative_use_rejection_sampling=True,
++        )
++
+     # Validate --speculative-draft-window-size / --speculative-draft-sink-size once,
+     # regardless of algorithm. Consumed by DFLASH (compact draft KV cache), Llama
+     # EAGLE-3 (drafter attention SWA), and the built-in MTP/NEXTN + EAGLE draft-decode
+@@ -1260,6 +1273,36 @@ def _fall_back_xpu_draft_attention_for_head_size(server_args: ServerArgs) -> Non
+     )
+ 
+ 
++def _validate_sampled_tree(view) -> None:
++    """Constraints of rejection sampling / HSD on a sampled EAGLE tree (topk > 1)."""
++    topk, steps = view.speculative_eagle_topk, view.speculative_num_steps
++    if view.speculative_use_block_verification and not view.speculative_use_hsd:
++        raise ValueError(
++            "--speculative-use-block-verification is chain-only; use "
++            "--speculative-use-hsd to block-verify a sampled tree."
++        )
++    full_tree = 1 + topk + (steps - 1) * topk * topk
++    # A drawn child dropped by its own score would bias the remaining draws.
++    if view.speculative_num_draft_tokens != full_tree:
++        raise ValueError(
++            "Rejection sampling / HSD on a sampled tree must not prune it: set "
++            f"--speculative-num-draft-tokens {full_tree} "
++            f"(= 1 + topk + (num_steps - 1) * topk^2), got "
++            f"{view.speculative_num_draft_tokens}."
++        )
++    # Seeded draws hash (request, position): siblings would share their noise.
++    if view.enable_deterministic_inference:
++        raise ValueError(
++            "Rejection sampling / HSD on a sampled tree does not support "
++            "--enable-deterministic-inference."
++        )
++    if view.enable_multi_layer_eagle:
++        raise ValueError(
++            "Rejection sampling / HSD on a sampled tree does not support "
++            "--enable-multi-layer-eagle."
++        )
++
++
+ def _handle_eagle_family(server_args: ServerArgs) -> None:
+     cfg = resolving_view(server_args)
+     _check_oot_speculative_algorithm(
+@@ -1411,9 +1454,15 @@ def _handle_eagle_family(server_args: ServerArgs) -> None:
+                 "EAGLE / EAGLE3 / NEXTN, not "
+                 f"speculative_algorithm={cfg.speculative_algorithm}."
+             )
+-        if cfg.speculative_eagle_topk != 1:
+-            raise ValueError(
+-                "--speculative-use-rejection-sampling requires --speculative-eagle-topk=1."
++        view = resolved_view(server_args)
++        if view.speculative_eagle_topk > 1:
++            _validate_sampled_tree(view)
++        elif view.speculative_use_hsd:
++            # Single-draft HSD is block verification (Sun et al., 2024).
++            declare_resolution(
++                server_args,
++                "_handle_eagle_family",
++                speculative_use_block_verification=True,
+             )
+         if cfg.enable_deterministic_inference and not cfg.device.startswith("cuda"):
+             raise ValueError(
+diff --git a/python/sglang/srt/speculative/eagle_utils.py b/python/sglang/srt/speculative/eagle_utils.py
+index a775dd3425..c5ad9974b8 100644
+--- a/python/sglang/srt/speculative/eagle_utils.py
++++ b/python/sglang/srt/speculative/eagle_utils.py
+@@ -19,6 +19,7 @@ from sglang.kernels.ops.speculative.spec_tree import (
+ )
+ from sglang.kernels.ops.speculative.verify_sampling import (
+     chain_speculative_sampling_triton,
++    sampled_tree_verify,
+     tree_speculative_sampling_target_only,
+ )
+ from sglang.srt.environ import envs
+@@ -544,6 +545,22 @@ def _verify_coins(
+     return coins, coins_for_final_sampling
+ 
+ 
++def _sampled_tree_verify_coins(
++    *, batch_size: int, draft_token_num: int, max_tree_depth: int, device
++) -> Tuple[torch.Tensor, torch.Tensor]:
++    """Coins of sampled_tree_verify: [bs, node, path position] and one final coin.
++
++    Unseeded only; the server args reject deterministic inference for sampled trees.
++    """
++    coins = torch.rand(
++        (batch_size, draft_token_num, max_tree_depth), dtype=torch.float32, device=device
++    )
++    coins_for_final_sampling = torch.rand(
++        (batch_size,), dtype=torch.float32, device=device
++    )
++    return coins, coins_for_final_sampling
++
++
+ def _verify_uses_greedy(
+     *,
+     is_all_greedy: bool,
+@@ -1057,7 +1074,14 @@ def eagle_sample(
+                 tp_group.broadcast(accept_index, src=0)
+                 tp_group.broadcast(num_correct_drafts, src=0)
+     else:
+-        if use_rejection_sampling:
++        sampled_tree = use_rejection_sampling and verify_input.topk > 1
++        if sampled_tree:
++            sampling_fn = partial(
++                sampled_tree_verify,
++                topk=verify_input.topk,
++                use_hsd=get_spec().speculative_use_hsd,
++            )
++        elif use_rejection_sampling:
+             sampling_fn = chain_speculative_sampling_triton
+             if get_spec().speculative_use_block_verification:
+                 sampling_fn = partial(sampling_fn, block_verification=True)
+@@ -1094,13 +1118,21 @@ def eagle_sample(
+                 "does not produce one (draft_probs missing or vocab-mismatched)."
+             )
+ 
+-        coins, coins_for_final_sampling = _verify_coins(
+-            sampling_info=sampling_info,
+-            seq_lens=batch.seq_lens,
+-            draft_token_num=verify_input.draft_token_num,
+-            candidates=candidates,
+-            device=device,
+-        )
++        if sampled_tree:
++            coins, coins_for_final_sampling = _sampled_tree_verify_coins(
++                batch_size=bs,
++                draft_token_num=verify_input.draft_token_num,
++                max_tree_depth=verify_input.max_tree_depth,
++                device=device,
++            )
++        else:
++            coins, coins_for_final_sampling = _verify_coins(
++                sampling_info=sampling_info,
++                seq_lens=batch.seq_lens,
++                draft_token_num=verify_input.draft_token_num,
++                candidates=candidates,
++                device=device,
++            )
+         sampling_fn(
+             predicts=predict,  # mutable
+             accept_index=accept_index,  # mutable
+diff --git a/python/sglang/srt/speculative/eagle_worker_v2.py b/python/sglang/srt/speculative/eagle_worker_v2.py
+index 1bed0ba148..496e0b2be2 100644
+--- a/python/sglang/srt/speculative/eagle_worker_v2.py
++++ b/python/sglang/srt/speculative/eagle_worker_v2.py
+@@ -173,7 +173,17 @@ def _qsa_index_share_requested(hf_config) -> bool:
+     )
+ 
+ 
++def _per_node(values: Optional[torch.Tensor], topk: int) -> Optional[torch.Tensor]:
++    """Per-request sampling params repeated for the topk expanded nodes of a request."""
++    if values is None or topk == 1:
++        return values
++    return values.repeat_interleave(topk, dim=0)
++
++
+ class EagleDraftWorker(EagleDraftWorkerBase):
++    # Class default so unit-test harnesses can build the worker without __init__.
++    sampled_tree: bool = False
++
+     # Always-present draft dispatch. init_attention_backends resolves it before
+     # graph capture; the class default keeps __new__-based test harnesses on stock.
+     draft_runtime: eagle_megakernel.EagleDraftRuntime = (
+@@ -198,8 +208,11 @@ class EagleDraftWorker(EagleDraftWorkerBase):
+         # Args for easy access
+         self.device = get_device().device
+         self.topk = get_spec().speculative_eagle_topk
+-        if get_spec().speculative_use_rejection_sampling:
+-            assert self.topk == 1, "Chain speculative sampling supports only topk=1"
++        # topk > 1 under rejection sampling: each expanded node samples its children
++        # without replacement and keeps its q for the sampled-tree verifier.
++        self.sampled_tree = (
++            get_spec().speculative_use_rejection_sampling and self.topk > 1
++        )
+         self.speculative_num_steps = get_spec().speculative_num_steps
+         self.speculative_num_draft_tokens = get_spec().speculative_num_draft_tokens
+         self.speculative_algorithm = SpeculativeAlgorithm.from_string(
+@@ -527,6 +540,11 @@ class EagleDraftWorker(EagleDraftWorkerBase):
+         if get_model().model_impl == "mindspore":
+             return
+ 
++        if self.sampled_tree:
++            # TODO(perf): the draft graphs hold chain-shaped (topk=1) q buffers.
++            logger.warning("Sampled draft trees run the draft without CUDA graphs.")
++            return
++
+         Device2DraftCudaGraphRunner = {
+             "xpu": EAGLEDraftCudaGraphRunner,
+             "npu": EAGLEDraftCudaGraphRunner,
+@@ -920,13 +938,18 @@ class EagleDraftWorker(EagleDraftWorkerBase):
+                     logits_output.next_token_logits, f"draft_forward step {i}"
+                 )
+                 if needs_draft_probs:
++                    sampling_info = forward_batch.sampling_info
+                     probs, topk_p, topk_index = sample_draft_proposal(
+                         logits_output.next_token_logits,
+-                        forward_batch.sampling_info.temperatures,
+-                        forward_batch.sampling_info.top_ks,
+-                        sampling_seed=forward_batch.sampling_info.sampling_seed,
++                        _per_node(sampling_info.temperatures, self.topk),
++                        _per_node(sampling_info.top_ks, self.topk),
++                        # Seeds hash (request, position), which siblings share.
++                        sampling_seed=(
++                            None if self.sampled_tree else sampling_info.sampling_seed
++                        ),
+                         positions=forward_batch.positions + 1,
+                         draft_step=i + 1,
++                        num_samples=self.topk,
+                     )
+                     draft_probs_list.append(probs)
+                     forward_batch.positions.add_(1)
+@@ -995,15 +1018,20 @@ class EagleDraftWorker(EagleDraftWorkerBase):
+         draft_probs_list: Optional[List[torch.Tensor]],
+         draft_tokens: torch.Tensor,
+     ) -> Optional[torch.Tensor]:
+-        """Stack per-step q and align it with chain slots for verification.
++        """Stack the proposal distributions q in the layout the verify kernel reads.
+ 
+-        Row i holds the distribution for chain slot i + 1; the verify kernel reads
+-        row ``step - 1`` for slot ``step``. None means the proposal distribution
+-        was not collected: rejection sampling is off, or the batch is all-greedy.
++        Chain: row i holds the distribution for chain slot i + 1; the verify kernel
++        reads row ``step - 1`` for slot ``step``. Sampled tree: the root's q, then
++        each step's topk expanded nodes in input order, so node n's children were
++        drawn from row ``(first_child(n) - 1) // topk``. None means q was not
++        collected: rejection sampling is off, or the batch is all-greedy.
+         """
+         if draft_probs_list is None:
+             return None
+-        draft_probs = torch.stack(draft_probs_list, dim=1)
++        bs = draft_probs_list[0].shape[0]
++        draft_probs = torch.cat(
++            [probs.view(bs, -1, probs.shape[-1]) for probs in draft_probs_list], dim=1
++        )
+         if not self.draft_probs_need_vocab_scatter:
+             return draft_probs
+         draft_probs = scatter_draft_probs_to_target_vocab(
+@@ -1011,7 +1039,7 @@ class EagleDraftWorker(EagleDraftWorkerBase):
+         )
+         # Every proposed token must have q > 0. Zero-mass rows are graph filler:
+         # capture warms up on zeroed q, and replay zeroes padded rows.
+-        if envs.SGLANG_ENABLE_ASYNC_ASSERT.get():
++        if envs.SGLANG_ENABLE_ASYNC_ASSERT.get() and not self.sampled_tree:
+             proposed_q = draft_probs.gather(
+                 -1, draft_tokens.to(torch.int64).unsqueeze(-1)
+             )
+@@ -1179,7 +1207,7 @@ class EagleDraftWorker(EagleDraftWorkerBase):
+         if use_rejection_sampling:
+             topk_p, topk_index = fast_sample(
+                 probs,
+-                num_samples=1,
++                num_samples=self.topk,
+                 sampling_seed=batch.sampling_info.sampling_seed,
+                 positions=batch.seq_lens,
+             )
+@@ -1355,6 +1383,7 @@ class EagleDraftWorker(EagleDraftWorkerBase):
+                     batch.sampling_info.top_ks,
+                     sampling_seed=batch.sampling_info.sampling_seed,
+                     positions=batch_result.new_seq_lens,
++                    num_samples=self.topk,
+                 )
+             if self.topk == 1 and _is_hip:
+                 ret_topk_p, ret_topk_index = draft_topk1_argmax_only(
+diff --git a/python/sglang/srt/speculative/spec_utils.py b/python/sglang/srt/speculative/spec_utils.py
+index 2fc4d10cbc..f0c8c3e362 100644
+--- a/python/sglang/srt/speculative/spec_utils.py
++++ b/python/sglang/srt/speculative/spec_utils.py
+@@ -241,9 +241,13 @@ def sample_draft_proposal(
+     sampling_seed: Optional[torch.Tensor] = None,
+     positions: Optional[torch.Tensor] = None,
+     draft_step: int = 0,
++    num_samples: int = 1,
+ ):
+     """Leviathan draft proposal: q = softmax(logits / T), X ~ q.
+ 
++    With ``num_samples`` > 1 the proposals are drawn from q without replacement,
++    in draw order (the children of one node of a sampled draft tree).
++
+     Returns (q, q(X), X). The verify's accept test coin*q(X) < p(X) is unbiased
+     only if q is exactly the distribution X was drawn from, so callers must hand
+     the returned q (not a recomputed one) to the verify.
+@@ -265,7 +269,7 @@ def sample_draft_proposal(
+     probs = sampling_softmax(next_token_logits, temperatures=temperatures)
+     topk_p, topk_index = fast_sample(
+         probs,
+-        num_samples=1,
++        num_samples=num_samples,
+         sampling_seed=sampling_seed,
+         positions=positions,
+         draft_step=draft_step,
+@@ -281,7 +285,12 @@ def sample_draft_proposal(
+             "top_k, not a host placeholder"
+         )
+         greedy = (top_ks <= 1).view(-1, 1)
+-        topk_index = torch.where(greedy, probs.argmax(dim=-1, keepdim=True), topk_index)
++        greedy_index = (
++            probs.argmax(dim=-1, keepdim=True)
++            if num_samples == 1
++            else probs.topk(num_samples, dim=-1).indices
++        )
++        topk_index = torch.where(greedy, greedy_index, topk_index)
+         topk_p = probs.gather(1, topk_index)
+     return probs, topk_p, topk_index
+ 
+diff --git a/test/registered/kernels/ops/speculative/test_sampled_tree_verify.py b/test/registered/kernels/ops/speculative/test_sampled_tree_verify.py
+new file mode 100644
+index 0000000000..79097549ac
+--- /dev/null
++++ b/test/registered/kernels/ops/speculative/test_sampled_tree_verify.py
+@@ -0,0 +1,270 @@
++"""Sampled-tree verifiers (tree HSD and RRSw) on trees built by EAGLE's own tree code."""
++
++import itertools
++import os
++
++import pytest
++import torch
++from scipy.stats import chi2
++
++from sglang.kernels.ops.speculative.reject_sampling import (
++    chain_speculative_sampling_triton,
++)
++from sglang.kernels.ops.speculative.sampled_tree_verify import sampled_tree_verify
++from sglang.srt.speculative.eagle_utils import (
++    build_tree_kernel_efficient,
++    organize_draft_results,
++)
++from sglang.srt.speculative.spec_utils import select_top_k_tokens
++from sglang.test.ci.ci_register import register_cuda_ci
++
++register_cuda_ci(est_time=120, stage="base-b-kernel-unit", runner_config="1-gpu-small")
++
++DEVICE = "cuda"
++
++
++class _Lm:
++    """Context-dependent target p and draft q over a tiny vocab, one row per prefix.
++
++    A prefix t_0..t_d (t_0 the root) has code sum_i (t_i + 1) * (V + 1)^i.
++    """
++
++    def __init__(self, vocab, max_len, seed, zero_frac=0.2):
++        g = torch.Generator().manual_seed(seed)
++        rows = (vocab + 1) ** max_len
++        conc = torch.full((vocab,), 0.6)
++        p = torch.distributions.Dirichlet(conc).sample((rows,))
++        q = 0.5 * p + 0.5 * torch.distributions.Dirichlet(conc).sample((rows,))
++        # Zeros in q: some nodes have fewer than topk real children. Zeros in p:
++        # drafts the target can never produce.
++        q[torch.rand(rows, vocab, generator=g) < zero_frac] = 0.0
++        p[torch.rand(rows, vocab, generator=g) < zero_frac / 2] = 0.0
++        q[q.sum(-1) == 0, 0] = 1.0
++        p[p.sum(-1) == 0, 0] = 1.0
++        self.p = (p / p.sum(-1, keepdim=True)).to(DEVICE)
++        self.q = (q / q.sum(-1, keepdim=True)).to(DEVICE)
++        self.vocab = vocab
++
++    def extend(self, codes, tokens, depth):
++        return codes + (tokens + 1) * (self.vocab + 1) ** depth
++
++
++def _children(q, k, sample):
++    """k children per row: draws without replacement in draw order, or the top-k."""
++    keys = q.log()
++    if sample:
++        keys = keys - torch.empty_like(q).exponential_().log()
++    idx = torch.topk(keys, k, dim=-1).indices
++    return idx, q.gather(-1, idx)
++
++
++def _draft_tree(lm, bs, topk, steps, sample=True):
++    """EAGLE's draft loop with lm as the draft head; nothing is pruned."""
++    root_codes = torch.ones(bs, dtype=torch.long, device=DEVICE)  # root token 0
++    q_root = lm.q[root_codes]
++    topk_index, topk_p = _children(q_root, topk, sample)
++    cand_codes = [lm.extend(root_codes[:, None], topk_index, 1)]
++    draft_probs = [q_root[:, None]]
++    score_list, token_list, parents_list = [], [], []
++    scores = None
++    for i in range(steps):
++        _, _, scores, tree_info = select_top_k_tokens(
++            i, topk_p, topk_index, None, scores, topk
++        )
++        score_list.append(tree_info[0])
++        token_list.append(tree_info[1])
++        parents_list.append(tree_info[2])
++        if i == 0:
++            frontier = cand_codes[0]
++        else:
++            frontier = cand_codes[i].gather(1, tree_info[2] - (topk * topk * (i - 1) + topk))
++        if i == steps - 1:
++            break
++        q = lm.q[frontier]  # [bs, topk, vocab]
++        draft_probs.append(q)
++        topk_index, topk_p = _children(q.view(bs * topk, -1), topk, sample)
++        cand_codes.append(
++            lm.extend(frontier.view(bs * topk, 1), topk_index, i + 2).view(bs, -1)
++        )
++
++    num_nodes = 1 + topk + (steps - 1) * topk * topk
++    parent_list, top_scores_index, draft_tokens = organize_draft_results(
++        score_list, token_list, parents_list, num_nodes
++    )
++    node_codes = torch.cat(
++        [root_codes[:, None], torch.cat(cand_codes, 1).gather(1, top_scores_index)], 1
++    )
++    seq_lens = torch.full((bs,), 16, dtype=torch.long, device=DEVICE)
++    _, _, retrieve_index, next_token, next_sibling, tokens = build_tree_kernel_efficient(
++        torch.zeros(bs, dtype=torch.long, device=DEVICE),
++        parent_list,
++        top_scores_index,
++        draft_tokens,
++        seq_lens,
++        int(seq_lens.sum()),
++        topk,
++        steps,
++        num_nodes,
++    )
++    return dict(
++        candidates=tokens.view(bs, num_nodes),
++        retrieve_index=retrieve_index,
++        next_token=next_token,
++        next_sibling=next_sibling,
++        target_probs=lm.p[node_codes].contiguous(),
++        draft_probs=torch.cat(draft_probs, 1).contiguous(),
++        node_codes=node_codes,
++    )
++
++
++def _verify(tree, topk, steps, use_hsd, coins=None, final_coins=None):
++    bs, num_nodes = tree["candidates"].shape
++    if coins is None:
++        coins = torch.rand(bs, num_nodes, steps + 1, device=DEVICE)
++        final_coins = torch.rand(bs, device=DEVICE)
++    predicts = torch.full((bs * num_nodes,), -1, dtype=torch.int32, device=DEVICE)
++    accept_index = torch.full((bs, steps + 1), -1, dtype=torch.int32, device=DEVICE)
++    num_accept = torch.empty(bs, dtype=torch.int32, device=DEVICE)
++    sampled_tree_verify(
++        predicts,
++        accept_index,
++        num_accept,
++        tree["candidates"],
++        tree["retrieve_index"],
++        tree["next_token"],
++        tree["next_sibling"],
++        coins,
++        final_coins,
++        tree["target_probs"],
++        tree["draft_probs"],
++        topk=topk,
++        use_hsd=use_hsd,
++    )
++    return predicts, accept_index, num_accept
++
++
++def _first_tokens(lm, tree, predicts, accept_index, num_accept, length):
++    """The first `length` tokens each step commits, continued from p where it stops."""
++    bs, num_nodes = tree["candidates"].shape
++    local = (accept_index.long() - torch.arange(bs, device=DEVICE)[:, None] * num_nodes).clamp(min=0)
++    drafted = tree["candidates"].gather(1, local)  # column j: j-th accepted node
++    bonus = predicts.long()[accept_index.long().gather(1, num_accept.long()[:, None])][:, 0]
++    out = torch.empty(bs, length, dtype=torch.long, device=DEVICE)
++    codes = torch.ones(bs, dtype=torch.long, device=DEVICE)
++    for j in range(length):
++        sampled = torch.multinomial(lm.p[codes], 1)[:, 0]
++        tok = torch.where(
++            j < num_accept,
++            drafted[:, min(j + 1, local.shape[1] - 1)],
++            torch.where(j == num_accept, bonus, sampled),
++        )
++        out[:, j] = tok
++        codes = lm.extend(codes, tok, j + 1)
++    return out
++
++
++def _exact_joint(lm, length):
++    probs = []
++    for seq in itertools.product(range(lm.vocab), repeat=length):
++        code, prob = 1, 1.0
++        for j, tok in enumerate(seq):
++            prob *= lm.p[code, tok].item()
++            code += (tok + 1) * (lm.vocab + 1) ** (j + 1)
++        probs.append(prob)
++    return torch.tensor(probs, dtype=torch.float64)
++
++
++def _chi2_pvalue(lm, topk, steps, use_hsd, sample, trials, length=3):
++    counts = torch.zeros(lm.vocab**length, dtype=torch.float64, device=DEVICE)
++    weights = lm.vocab ** torch.arange(length - 1, -1, -1, device=DEVICE)
++    bs = 8192
++    for _ in range(trials // bs):
++        tree = _draft_tree(lm, bs, topk, steps, sample=sample)
++        out = _first_tokens(lm, tree, *_verify(tree, topk, steps, use_hsd), length)
++        counts += torch.bincount((out * weights).sum(1), minlength=counts.numel())
++    expected = _exact_joint(lm, length) * counts.sum().cpu()
++    counts = counts.cpu()
++    keep = expected >= 5
++    stat = (((counts - expected) ** 2) / expected)[keep].sum().item()
++    return chi2.sf(stat, int(keep.sum()) - 1)
++
++
++@pytest.mark.parametrize("vocab,steps", [(4, 3), (1000, 5)])
++def test_chain_matches_block_verification(vocab, steps):
++    """Single-draft HSD is block verification: on a topk=1 chain the tree walker
++    must take the same decisions as the chain block-verification kernel."""
++    torch.manual_seed(0)
++    lm_rows = None if vocab > 8 else _Lm(vocab, steps + 2, seed=1)
++    bs, num_nodes = 512, steps + 1
++    if lm_rows is None:
++        target = torch.softmax(torch.randn(bs, num_nodes, vocab, device=DEVICE) * 2, -1)
++        draft = torch.softmax(torch.randn(bs, steps, vocab, device=DEVICE) * 2, -1)
++        draft = 0.5 * draft + 0.5 * target[:, :steps]
++        candidates = torch.cat(
++            [torch.zeros(bs, 1, dtype=torch.long, device=DEVICE),
++             torch.multinomial(draft.view(-1, vocab), 1).view(bs, steps)], 1)
++        offsets = torch.arange(bs, device=DEVICE)[:, None] * num_nodes
++        tree = dict(
++            candidates=candidates,
++            retrieve_index=offsets + torch.arange(num_nodes, device=DEVICE),
++            next_token=torch.cat([torch.arange(1, num_nodes, device=DEVICE),
++                                  torch.tensor([-1], device=DEVICE)]).expand(bs, -1),
++            next_sibling=torch.full((bs, num_nodes), -1, device=DEVICE),
++            target_probs=target,
++            draft_probs=draft,
++        )
++    else:
++        tree = _draft_tree(lm_rows, bs, 1, steps)
++    coins = torch.rand(bs, num_nodes, steps + 1, device=DEVICE)
++    final_coins = torch.rand(bs, device=DEVICE)
++    predicts, accept_index, num_accept = _verify(tree, 1, steps, True, coins, final_coins)
++
++    ref_predicts = torch.full_like(predicts, -1)
++    ref_accept = torch.full_like(accept_index, -1)
++    ref_num = torch.empty_like(num_accept)
++    chain_coins = torch.zeros(bs, num_nodes, device=DEVICE)
++    chain_coins[:, :steps] = coins[:, 1, 1:]  # the walker's path starts at node 1
++    chain_speculative_sampling_triton(
++        ref_predicts, ref_accept, ref_num, tree["candidates"], tree["retrieve_index"],
++        None, None, chain_coins, final_coins, tree["target_probs"],
++        tree["draft_probs"], 1.0, 1.0, True, block_verification=True,
++    )
++    torch.testing.assert_close(num_accept, ref_num)
++    torch.testing.assert_close(accept_index, ref_accept)
++    # The bonus draw may land on the other side of a CDF boundary after rounding.
++    assert (predicts != ref_predicts).float().mean().item() < 1e-3
++
++
++@pytest.mark.parametrize("use_hsd", [True, False])
++@pytest.mark.parametrize("topk,steps", [(2, 3), (3, 2)])
++def test_lossless_on_sampled_trees(use_hsd, topk, steps):
++    """The first three committed tokens follow the target joint exactly."""
++    torch.manual_seed(1)
++    lm = _Lm(4, steps + 4, seed=2)
++    assert _chi2_pvalue(lm, topk, steps, use_hsd, sample=True, trials=8192 * 40) > 1e-4
++
++
++def test_detects_bias_of_topk_trees():
++    """Power check of the harness above: verifying top-k children as if they were
++    draws from q is not lossless, and the test must see it."""
++    torch.manual_seed(1)
++    lm = _Lm(4, 7, seed=2)
++    assert _chi2_pvalue(lm, 2, 3, True, sample=False, trials=8192 * 40) < 1e-6
++
++
++def test_hsd_accepts_at_least_rrsw():
++    """Tree HSD accepts at least as many draft tokens as RRSw on the same trees."""
++    torch.manual_seed(3)
++    lm = _Lm(8, 7, seed=4, zero_frac=0.0)
++    hsd, rrsw = 0.0, 0.0
++    for _ in range(10):
++        tree = _draft_tree(lm, 8192, 2, 4)
++        hsd += _verify(tree, 2, 4, True)[2].float().mean().item()
++        rrsw += _verify(tree, 2, 4, False)[2].float().mean().item()
++    assert hsd > rrsw
++
++
++if __name__ == "__main__":
++    import sys
++
++    sys.exit(pytest.main([__file__, "-v", "-s"]))
+diff --git a/test/registered/unit/spec/test_block_verification_args.py b/test/registered/unit/spec/test_block_verification_args.py
+index e48daa0170..17fa5db36b 100644
+--- a/test/registered/unit/spec/test_block_verification_args.py
++++ b/test/registered/unit/spec/test_block_verification_args.py
+@@ -85,6 +85,46 @@ class TestBlockVerificationArgs(unittest.TestCase):
+                     use_rejection_sampling,
+                 )
+ 
++    def test_hsd_resolves_by_topk(self):
++        """--speculative-use-hsd turns on rejection sampling; on a chain it is block
++        verification, on a sampled tree the tree verifier (not the chain kernel)."""
++        for topk, steps, draft_tokens, block in ((1, 3, 4, True), (2, 3, 11, False)):
++            with self.subTest(topk=topk):
++                args = self._args(
++                    speculative_algorithm="EAGLE3",
++                    speculative_use_block_verification=False,
++                    speculative_use_hsd=True,
++                    speculative_eagle_topk=topk,
++                    speculative_num_steps=steps,
++                    speculative_num_draft_tokens=draft_tokens,
++                    page_size=1,
++                )
++                handle_speculative_decoding(args)
++                self.assertTrue(
++                    resolution_result(args, "speculative_use_rejection_sampling")
++                )
++                self.assertEqual(
++                    resolution_result(args, "speculative_use_block_verification"),
++                    block,
++                )
++
++    def test_sampled_tree_must_not_be_pruned(self):
++        """Pruning drawn children by score biases a sampled tree, so rejection
++        sampling / HSD on topk > 1 needs the full 1 + k + (steps - 1) * k^2 nodes."""
++        for flag in ("speculative_use_rejection_sampling", "speculative_use_hsd"):
++            with self.subTest(flag=flag):
++                args = self._args(
++                    speculative_algorithm="EAGLE3",
++                    speculative_use_block_verification=False,
++                    speculative_eagle_topk=2,
++                    speculative_num_steps=3,
++                    speculative_num_draft_tokens=10,
++                    page_size=1,
++                    **{flag: True},
++                )
++                with self.assertRaisesRegex(ValueError, "must not prune"):
++                    handle_speculative_decoding(args)
++
+     def test_unsupported_configurations(self):
+         cases = [
+             ({"speculative_algorithm": None}, "only supports EAGLE"),
+@@ -101,7 +141,7 @@ class TestBlockVerificationArgs(unittest.TestCase):
+                 {"speculative_algorithm": "DSPARK", "device": "npu"},
+                 "only supports CUDA or ROCm",
+             ),
+-            ({"speculative_eagle_topk": 2}, "requires --speculative-eagle-topk=1"),
++            ({"speculative_eagle_topk": 2}, "chain-only"),
+             ({"speculative_accept_threshold_single": 0.5}, "incompatible"),
+             ({"speculative_accept_threshold_acc": 0.5}, "incompatible"),
+         ]
+diff --git a/test/registered/unit/spec/test_oot_eagle_hooks.py b/test/registered/unit/spec/test_oot_eagle_hooks.py
+index 3ee57de198..9c744b2de2 100644
+--- a/test/registered/unit/spec/test_oot_eagle_hooks.py
++++ b/test/registered/unit/spec/test_oot_eagle_hooks.py
+@@ -192,6 +192,7 @@ class TestOOTSpecGraphRunnerSelection(CustomTestCase):
+             speculative_num_steps=3,
+             speculative_num_draft_tokens=4,
+             topk=1,
++            sampled_tree=False,
+             target_worker=SimpleNamespace(device="custom"),
+             draft_runner=None,
+             device="custom",
+diff --git a/test/registered/unit/spec/test_spec_registry.py b/test/registered/unit/spec/test_spec_registry.py
+index bc0771f16e..fea4c5fd12 100644
+--- a/test/registered/unit/spec/test_spec_registry.py
++++ b/test/registered/unit/spec/test_spec_registry.py
+@@ -217,6 +217,7 @@ class TestServerArgsHook(_RegistryIsolated):
+             moe_runner_backend="auto",
+             speculative_algorithm="my_handle_args",
+             speculative_use_block_verification=False,
++            speculative_use_hsd=False,
+             decrypted_draft_config_file=None,
+             trust_remote_code=False,
+             speculative_draft_window_size=None,

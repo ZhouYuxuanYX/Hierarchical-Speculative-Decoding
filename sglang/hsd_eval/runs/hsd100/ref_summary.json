@@ -1,0 +1,30 @@
+{
+ "chain_hsd": {
+  "n": 100,
+  "acc": 0.79,
+  "tok_per_step": 3.2206218162655893,
+  "tok_per_s": 101.51082186889845,
+  "truncated": 0.03
+ },
+ "sampled_hsd": {
+  "n": 100,
+  "acc": 0.79,
+  "tok_per_step": 4.658154859967051,
+  "tok_per_s": 116.38367275926443,
+  "truncated": 0.02
+ },
+ "chain_rrsw": {
+  "n": 100,
+  "acc": 0.85,
+  "tok_per_step": 3.0670835702103467,
+  "tok_per_s": 96.75488355380686,
+  "truncated": 0.0
+ },
+ "sampled_rrsw": {
+  "n": 100,
+  "acc": 0.84,
+  "tok_per_step": 4.542368045649073,
+  "tok_per_s": 114.47680966004344,
+  "truncated": 0.0
+ }
+}
