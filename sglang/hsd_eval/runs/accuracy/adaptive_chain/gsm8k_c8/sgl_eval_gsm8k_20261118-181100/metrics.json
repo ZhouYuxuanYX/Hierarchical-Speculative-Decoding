@@ -1,0 +1,47 @@
+{
+  "aggregate": {
+    "error_rate": 0.0,
+    "score": 0.819560272934041,
+    "stop_rate": 0.9931766489764974,
+    "truncated_rate": 0.006823351023502654
+  },
+  "base_url": "http://127.0.0.1:30001/v1",
+  "gen": {
+    "chat_template_kwargs": null,
+    "extra_body": null,
+    "max_tokens": 1024,
+    "min_p": 0.0,
+    "reasoning_effort": null,
+    "repetition_penalty": 1.0,
+    "seed": null,
+    "system_message": null,
+    "temperature": 0.6,
+    "top_p": 0.9
+  },
+  "latency_seconds": 260.9824266419746,
+  "model": "meta-llama/Llama-3.1-8B-Instruct",
+  "n_repeats": 1,
+  "name": "gsm8k",
+  "ns_commit_sha": "645cf567ff08c0ae9cc3fc8e1edbb975b3067816",
+  "num_examples": 1319,
+  "num_threads": 8,
+  "output_throughput_tps": 874.1393163339848,
+  "sgl_eval_version": "0.1.3",
+  "timestamp": "20261118-181100",
+  "token_usage": {
+    "completion_tokens": {
+      "count": 1319,
+      "mean": 172.96057619408643
+    },
+    "prompt_tokens": {
+      "count": 1319,
+      "mean": 116.9696739954511
+    },
+    "reasoning_tokens": {
+      "count": 1319,
+      "mean": 0.0
+    }
+  },
+  "total_completion_tokens": 228135,
+  "total_prompt_tokens": 154283
+}

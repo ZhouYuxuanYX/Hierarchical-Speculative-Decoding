@@ -1,0 +1,28 @@
+{
+ "0": {
+  "ctx": 115.33333333333333,
+  "best": {
+   "1": "tree8x5n32",
+   "2": "adaptive_tree_k4",
+   "4": "adaptive_tree_k4",
+   "8": "tree4x6n7",
+   "16": "chain3",
+   "32": "chain3",
+   "64": "adaptive_chain"
+  },
+  "champion": "adaptive_tree_k4"
+ },
+ "8": {
+  "ctx": 1846.3333333333333,
+  "best": {
+   "1": "tree10x5n60",
+   "2": "adaptive_tree_k4",
+   "4": "tree4x6n16",
+   "8": "tree4x6n16",
+   "16": "adaptive_chain",
+   "32": "adaptive_chain",
+   "64": "chain3"
+  },
+  "champion": "adaptive_chain"
+ }
+}

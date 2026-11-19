@@ -1,0 +1,566 @@
+diff --git a/python/sglang/srt/arg_groups/speculative_hook.py b/python/sglang/srt/arg_groups/speculative_hook.py
+index a878f66eed..10ebed11be 100644
+--- a/python/sglang/srt/arg_groups/speculative_hook.py
++++ b/python/sglang/srt/arg_groups/speculative_hook.py
+@@ -1586,6 +1586,7 @@ def _init_adaptive_speculative_params(server_args: ServerArgs) -> None:
+     cfg = resolving_view(server_args)
+     from sglang.srt.speculative.adaptive_spec_params import (
+         resolve_candidate_steps_from_config,
++        resolve_draft_tokens_for_steps,
+     )
+ 
+     candidate_steps = resolve_candidate_steps_from_config(
+@@ -1616,7 +1617,9 @@ def _init_adaptive_speculative_params(server_args: ServerArgs) -> None:
+     declare_resolution(
+         server_args,
+         "_init_adaptive_speculative_params",
+-        speculative_num_draft_tokens=cfg.speculative_num_steps + 1,
++        speculative_num_draft_tokens=resolve_draft_tokens_for_steps(
++            cfg_path=cfg.speculative_adaptive_config,
++        )[cfg.speculative_num_steps],
+     )
+ 
+ 
+diff --git a/python/sglang/srt/environ.py b/python/sglang/srt/environ.py
+index 80aa1ac1b3..8f55550bd0 100644
+--- a/python/sglang/srt/environ.py
++++ b/python/sglang/srt/environ.py
+@@ -1836,6 +1836,7 @@ class Envs:
+     SGLANG_ENABLE_NV_MEGA_PDDEC_RUNTIME_OPTIMIZATION = EnvBool(True)
+     # Reuse the resolved CPU sequence lengths for FlashInfer draft planning,
+     # avoiding a second blocking readback after generating the same indptr.
++    # Both host-plan flags: unset means on for EAGLE trees (topk > 1), off for chains.
+     SGLANG_OPT_FLASHINFER_DRAFT_HOST_INDPTR = EnvBool(False)
+     SGLANG_OPT_FLASHINFER_VERIFY_HOST_PLAN = EnvBool(False)
+     SGLANG_OPT_FUSED_KDA_VERIFY = EnvBool(False)
+diff --git a/python/sglang/srt/layers/attention/flashinfer_backend.py b/python/sglang/srt/layers/attention/flashinfer_backend.py
+index b616307107..e74ef216c0 100644
+--- a/python/sglang/srt/layers/attention/flashinfer_backend.py
++++ b/python/sglang/srt/layers/attention/flashinfer_backend.py
+@@ -193,6 +193,12 @@ global_override_indptr_cpu = None
+ global_override_window_indptr_cpu = None
+ 
+ 
++def _host_plan_enabled(flag, topk: int) -> bool:
++    """Sync-free host planning: on by default for EAGLE trees (topk > 1), whose
++    per-step blocking plan readbacks leave the GPU idle; an explicit setting wins."""
++    return flag.get() if flag.is_set() else topk > 1
++
++
+ def _verify_plan_uniform_q_len(spec_info) -> Optional[int]:
+     """EAGLE verify gives every request exactly num_tokens_per_req query rows.
+     Every plan through a captured verify wrapper must carry the same
+@@ -1025,11 +1031,14 @@ class FlashInferAttnBackend(AttentionBackend):
+ 
+         if (
+             in_capture
+-            and envs.SGLANG_OPT_FLASHINFER_VERIFY_HOST_PLAN.get()
+             and forward_mode.is_target_verify()
+             and spec_info is not None
+             and spec_info.spec_input_type == SpecInputType.EAGLE_VERIFY
+-            and spec_info.topk == 1
++            and _host_plan_enabled(
++                envs.SGLANG_OPT_FLASHINFER_VERIFY_HOST_PLAN, spec_info.topk
++            )
++            # Any topk: a tree's mask is packed per replay like a chain's (same
++            # [kv_len, num_draft_tokens] per-request layout).
+             and seq_lens_cpu is not None
+             and self.prefill_backend == "fa2"
+             and self.dispatch_reason is None
+@@ -2794,7 +2803,7 @@ class FlashInferMultiStepDraftBackend:
+         )
+         host_lengths = forward_batch.seq_lens_cpu
+         use_host_indptr = (
+-            envs.SGLANG_OPT_FLASHINFER_DRAFT_HOST_INDPTR.get()
++            _host_plan_enabled(envs.SGLANG_OPT_FLASHINFER_DRAFT_HOST_INDPTR, self.topk)
+             and self.draft_window_size == 0
+             and host_lengths is not None
+             and host_lengths.device.type == "cpu"
+diff --git a/python/sglang/srt/managers/scheduler_components/internal_state.py b/python/sglang/srt/managers/scheduler_components/internal_state.py
+index 38886df481..f75b21e06b 100644
+--- a/python/sglang/srt/managers/scheduler_components/internal_state.py
++++ b/python/sglang/srt/managers/scheduler_components/internal_state.py
+@@ -125,6 +125,8 @@ class SchedulerInternalStateController:
+         accept_length = self._average_accept_length()
+         if accept_length is not None:
+             state["avg_spec_accept_length"] = accept_length
++        state["spec_verify_token_ct"] = scheduler.metrics_reporter.spec_verify_token_ct
++        state["spec_verify_pass_ct"] = scheduler.metrics_reporter.spec_verify_pass_ct
+         if scheduler.spec_algorithm.is_dspark() and scheduler.draft_worker is not None:
+             info_record = scheduler.draft_worker.dump_info_records()
+             if info_record is not None:
+diff --git a/python/sglang/srt/managers/scheduler_components/metrics_reporter.py b/python/sglang/srt/managers/scheduler_components/metrics_reporter.py
+index 4530ad4dc1..1d10a1dbd1 100644
+--- a/python/sglang/srt/managers/scheduler_components/metrics_reporter.py
++++ b/python/sglang/srt/managers/scheduler_components/metrics_reporter.py
+@@ -299,6 +299,9 @@ class SchedulerMetricsReporter:
+         self.spec_num_forward_ct = 0
+         self.spec_total_num_accept_tokens = 0  # lifetime
+         self.spec_total_num_forward_ct = 0
++        # Lifetime; tokens the target verified (batch size x active draft-token width).
++        self.spec_verify_token_ct = 0
++        self.spec_verify_pass_ct = 0
+         self.spec_num_block_accept_tokens = 0
+         self.spec_num_cap_tokens = 0
+ 
+@@ -555,6 +558,12 @@ class SchedulerMetricsReporter:
+         self.spec_num_accept_tokens += num_accept_tokens
+         self.spec_num_correct_drafts += num_correct_drafts
+         self.spec_num_forward_ct += bs
++        # Under the overlap scheduler an adaptive switch may already be active,
++        # so a pass at a switch can be counted with the next state's width.
++        self.spec_verify_token_ct += (
++            bs * self._active_spec_config_snapshot()["num_draft_tokens"]
++        )
++        self.spec_verify_pass_ct += 1
+         self.spec_num_block_accept_tokens += num_block_accept_tokens
+         self.spec_num_cap_tokens += num_cap_tokens
+ 
+@@ -717,6 +726,8 @@ class SchedulerMetricsReporter:
+         self.spec_num_forward_ct = 0
+         self.spec_total_num_accept_tokens = 0
+         self.spec_total_num_forward_ct = 0
++        self.spec_verify_token_ct = 0
++        self.spec_verify_pass_ct = 0
+         self.spec_num_block_accept_tokens = 0
+         self.spec_num_cap_tokens = 0
+ 
+diff --git a/python/sglang/srt/model_executor/model_runner.py b/python/sglang/srt/model_executor/model_runner.py
+index b27e67c1bf..ccd47d89e5 100644
+--- a/python/sglang/srt/model_executor/model_runner.py
++++ b/python/sglang/srt/model_executor/model_runner.py
+@@ -236,7 +236,7 @@ from sglang.srt.sampling.sampling_observer import SamplingObserver
+ from sglang.srt.sampling.watermarking.core import WatermarkState
+ from sglang.srt.server_args import ServerArgs
+ from sglang.srt.speculative.adaptive_spec_params import (
+-    resolve_candidate_steps_from_config,
++    resolve_draft_tokens_for_steps,
+ )
+ from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
+ from sglang.srt.speculative.spec_utils import resolve_num_tokens_per_req
+@@ -967,10 +967,7 @@ class ModelRunner:
+         draft_token_counts = [max_speculative_num_draft_tokens()]
+         if spec.speculative_adaptive:
+             draft_token_counts.extend(
+-                steps + 1
+-                for steps in resolve_candidate_steps_from_config(
+-                    spec.speculative_adaptive_config
+-                )
++                resolve_draft_tokens_for_steps(spec.speculative_adaptive_config).values()
+             )
+ 
+         max_rows = 0
+diff --git a/python/sglang/srt/speculative/adaptive_runtime_state.py b/python/sglang/srt/speculative/adaptive_runtime_state.py
+index d28e324061..253f5fe73e 100644
+--- a/python/sglang/srt/speculative/adaptive_runtime_state.py
++++ b/python/sglang/srt/speculative/adaptive_runtime_state.py
+@@ -1,6 +1,8 @@
+ from dataclasses import dataclass
+ from typing import TYPE_CHECKING, Protocol
+ 
++from sglang.srt.runtime_context import get_spec
++
+ if TYPE_CHECKING:
+     from sglang.srt.layers.attention.base_attn_backend import AttentionBackend
+     from sglang.srt.model_executor.cpu_graph_runner import CPUGraphRunner
+@@ -33,6 +35,9 @@ class SpecRuntimeState:
+     draft_extend_attn_backend: "AttentionBackend | None"
+     cuda_graph_runner_for_draft_extend: "DecodeCudaGraphRunner | None"
+ 
++    # Draft width of this state; None keeps the server's speculative_eagle_topk.
++    speculative_eagle_topk: int | None = None
++
+ 
+ class AdaptiveSpecWorker(Protocol):
+     """Protocol that a worker must implement to use AdaptiveController."""
+@@ -59,6 +64,10 @@ class AdaptiveSpecPolicy(Protocol):
+ 
+     def get_steps_for_batch(self, batch_size: int) -> int: ...
+ 
++    def draft_tokens_for_step(self, step: int) -> int: ...
++
++    def draft_topk_for_step(self, step: int) -> int | None: ...
++
+     def on_verify_complete(
+         self, num_correct_drafts_per_req: list[int], batch_size: int
+     ) -> int | None: ...
+@@ -109,16 +118,43 @@ class AdaptiveController:
+                 continue
+ 
+             pruned_bs = self.params.cuda_graph_bs_for_step(steps)
++            # Only workers that support per-state draft width take the kwarg.
++            topk = self._draft_topk(steps)
+             state = self.worker.build_adaptive_runtime_state(
+                 speculative_num_steps=steps,
+-                speculative_num_draft_tokens=steps + 1,
++                speculative_num_draft_tokens=self.params.draft_tokens_for_step(steps),
+                 cuda_graph_bs=pruned_bs,
++                **({} if topk is None else {"speculative_eagle_topk": topk}),
+             )
+             self._states[steps] = state
+ 
++        self._pin_initial_topk()
+         # Start on the initial step.
+         self._activate(self.worker.speculative_num_steps)
+ 
++    def _pin_initial_topk(self) -> None:
++        """With per-state draft widths, pin the startup state's width explicitly
++        so switching back to it restores the startup topk."""
++        if not any(
++            self.params.draft_topk_for_step(s) is not None for s in self.candidate_steps
++        ):
++            return
++        startup_topk = get_spec().speculative_eagle_topk
++        steps = self.worker.speculative_num_steps
++        if self.params.draft_topk_for_step(steps) not in (None, startup_topk):
++            raise ValueError(
++                f"adaptive draft_topk for the initial steps {steps} must equal "
++                f"--speculative-eagle-topk {startup_topk}; its graphs were built at it"
++            )
++        self._states[steps].speculative_eagle_topk = startup_topk
++
++    def _draft_topk(self, steps: int) -> int | None:
++        """A step's draft width when the config sets any width, else None."""
++        if all(self.params.draft_topk_for_step(s) is None for s in self.candidate_steps):
++            return None
++        topk = self.params.draft_topk_for_step(steps)
++        return get_spec().speculative_eagle_topk if topk is None else topk
++
+     def activate_step_by_batch(self, batch_size: int) -> None:
+         target = self.params.get_steps_for_batch(batch_size)
+         if target != self.worker.speculative_num_steps:
+diff --git a/python/sglang/srt/speculative/adaptive_spec_params.py b/python/sglang/srt/speculative/adaptive_spec_params.py
+index e761c9fcf1..7128c018f5 100644
+--- a/python/sglang/srt/speculative/adaptive_spec_params.py
++++ b/python/sglang/srt/speculative/adaptive_spec_params.py
+@@ -69,11 +69,6 @@ def adaptive_unsupported_reason(server_args: ServerArgs) -> str | None:
+             f"{platform_worker_cls.__name__} (only the built-in worker "
+             "implements adaptive)"
+         )
+-    if cfg.speculative_eagle_topk is not None and cfg.speculative_eagle_topk != 1:
+-        return (
+-            f"speculative_eagle_topk={cfg.speculative_eagle_topk} "
+-            "(only topk=1 is supported)"
+-        )
+     if attn_dp_enabled_of(resolved_view(server_args)):
+         return (
+             "attention DP is not supported "
+@@ -128,9 +123,36 @@ def _load_adaptive_config(
+             'BS key, e.g. {"1": {"candidate_steps": [1,3,7]}}. '
+             f"Got keys: {list(cfg.keys())}"
+         )
++    for key in ("draft_tokens", "draft_topk"):
++        per_step = cfg.get(key, {})
++        if not isinstance(per_step, dict) or not all(
++            k.isdigit() and isinstance(v, int) and v >= 1 for k, v in per_step.items()
++        ):
++            raise ValueError(
++                f"{key} must map steps (string) to a positive int, "
++                f'e.g. {{"6": 16, "3": 4}}, got {per_step!r}'
++            )
+     return cfg, bs_entries
+ 
+ 
++def resolve_draft_tokens_for_steps(cfg_path: str | None = None) -> dict[int, int]:
++    """Draft-token count (tree size) of each candidate step's runtime state.
++
++    Steps missing from the config's ``draft_tokens`` map default to a chain,
++    ``steps + 1``; with topk > 1 a larger value makes that state a pruned tree.
++    """
++    cfg, bs_entries = _load_adaptive_config(cfg_path)
++    overrides = {int(k): v for k, v in cfg.get("draft_tokens", {}).items()}
++    steps = {s for entry in bs_entries.values() for s in entry["candidate_steps"]}
++    return {s: overrides.get(s, s + 1) for s in sorted(steps)}
++
++
++def resolve_draft_topk_for_steps(cfg_path: str | None = None) -> dict[int, int]:
++    """Per-step draft width overrides; steps not listed draft at the server's topk."""
++    cfg, _ = _load_adaptive_config(cfg_path)
++    return {int(k): v for k, v in cfg.get("draft_topk", {}).items()}
++
++
+ def resolve_candidate_steps_from_config(
+     cfg_path: str | None = None,
+ ) -> list[int]:
+@@ -276,6 +298,8 @@ class AdaptiveSpeculativeParams:
+         cfg_path: str | None = None,
+     ):
+         cfg, bs_entries = _load_adaptive_config(cfg_path)
++        self._draft_tokens = resolve_draft_tokens_for_steps(cfg_path)
++        self._draft_topk = resolve_draft_topk_for_steps(cfg_path)
+         self._bs_list: list[int] = sorted(bs_entries)
+         self._slots: dict[int, AdaptiveStepSlot] = {}
+         self._cuda_graph_bs: list[int] | None = None
+@@ -302,6 +326,13 @@ class AdaptiveSpeculativeParams:
+     def set_cuda_graph_bs(self, cuda_graph_bs: list[int] | None) -> None:
+         self._cuda_graph_bs = sorted(cuda_graph_bs) if cuda_graph_bs else None
+ 
++    def draft_tokens_for_step(self, step: int) -> int:
++        return self._draft_tokens[step]
++
++    def draft_topk_for_step(self, step: int) -> int | None:
++        """None means the server's ``speculative_eagle_topk``."""
++        return self._draft_topk.get(step)
++
+     def get_steps_for_batch(self, batch_size: int) -> int:
+         return self._route(batch_size).current_steps
+ 
+diff --git a/python/sglang/srt/speculative/eagle_worker_v2.py b/python/sglang/srt/speculative/eagle_worker_v2.py
+index 1bed0ba148..e3c2cdfac5 100644
+--- a/python/sglang/srt/speculative/eagle_worker_v2.py
++++ b/python/sglang/srt/speculative/eagle_worker_v2.py
+@@ -174,6 +174,8 @@ def _qsa_index_share_requested(hf_config) -> bool:
+ 
+ 
+ class EagleDraftWorker(EagleDraftWorkerBase):
++    # Class default so unit-test harnesses can build the worker without __init__.
++    carry_topk: int = 1
+     # Always-present draft dispatch. init_attention_backends resolves it before
+     # graph capture; the class default keeps __new__-based test harnesses on stock.
+     draft_runtime: eagle_megakernel.EagleDraftRuntime = (
+@@ -198,6 +200,9 @@ class EagleDraftWorker(EagleDraftWorkerBase):
+         # Args for easy access
+         self.device = get_device().device
+         self.topk = get_spec().speculative_eagle_topk
++        # Root top-k the draft extend hands to the next round. Adaptive states may
++        # draft narrower (topk <= startup topk) and slice it; it is sorted.
++        self.carry_topk = self.topk
+         if get_spec().speculative_use_rejection_sampling:
+             assert self.topk == 1, "Chain speculative sampling supports only topk=1"
+         self.speculative_num_steps = get_spec().speculative_num_steps
+@@ -702,6 +707,9 @@ class EagleDraftWorker(EagleDraftWorkerBase):
+ 
+     def draft(self, batch: ScheduleBatch, *, with_topology: bool = False):
+         draft_input: EagleDraftInput = batch.spec_info
++        if self.topk < self.carry_topk and draft_input.topk_p is not None:
++            draft_input.topk_p = draft_input.topk_p[:, : self.topk]
++            draft_input.topk_index = draft_input.topk_index[:, : self.topk]
+         forward_batch, can_run_decode_cuda_graph, iteration_ids = prepare_for_draft(
+             draft_input,
+             self.req_to_token_pool,
+@@ -1184,7 +1192,7 @@ class EagleDraftWorker(EagleDraftWorkerBase):
+                 positions=batch.seq_lens,
+             )
+         else:
+-            topk_p, topk_index = fast_topk(probs, self.topk, dim=-1)
++            topk_p, topk_index = fast_topk(probs, self.carry_topk, dim=-1)
+         return EagleDraftInput(
+             topk_p=topk_p,
+             topk_index=topk_index,
+@@ -1356,11 +1364,11 @@ class EagleDraftWorker(EagleDraftWorkerBase):
+                     sampling_seed=batch.sampling_info.sampling_seed,
+                     positions=batch_result.new_seq_lens,
+                 )
+-            if self.topk == 1 and _is_hip:
++            if self.carry_topk == 1 and _is_hip:
+                 ret_topk_p, ret_topk_index = draft_topk1_argmax_only(
+                     draft_logits_output.next_token_logits
+                 )
+-            elif self.topk == 1:
++            elif self.carry_topk == 1:
+                 # Gated to CUDA: see #26358 — ROCm's argmax tie-break corrupts
+                 # MTP draft selection on FP8 logits.
+                 ret_topk_index = torch.argmax(
+@@ -1373,7 +1381,7 @@ class EagleDraftWorker(EagleDraftWorkerBase):
+                     batch.sampling_info,
+                     get_spec().speculative_use_rejection_sampling,
+                 )
+-                ret_topk_p, ret_topk_index = fast_topk(probs, self.topk, dim=-1)
++                ret_topk_p, ret_topk_index = fast_topk(probs, self.carry_topk, dim=-1)
+             return None, ret_topk_p, ret_topk_index
+ 
+         ret_draft_probs, ret_topk_p, ret_topk_index = self.draft_runtime.extend_tokens(
+@@ -1405,6 +1413,8 @@ class EagleDraftWorker(EagleDraftWorkerBase):
+ 
+ 
+ class EAGLEWorkerV2(BaseSpecWorker):
++    # Set in __init__; None in unit-test harnesses that skip it (then topk is used).
++    carry_topk: Optional[int] = None
+     # Initialized with the post-verify graphs; class defaults let unit-test
+     # harnesses construct workers without __init__.
+     _post_verify_graphs: Optional[EaglePostVerifyGraphs] = None
+@@ -1431,6 +1441,8 @@ class EAGLEWorkerV2(BaseSpecWorker):
+         # Parse arguments
+         self.server_args = server_args
+         self.topk = get_spec().speculative_eagle_topk
++        # Width of carried root top-k (see EagleDraftWorker.carry_topk).
++        self.carry_topk = self.topk
+         self.speculative_num_steps = get_spec().speculative_num_steps
+         self.speculative_num_draft_tokens = get_spec().speculative_num_draft_tokens
+         self.gpu_id = gpu_id
+@@ -1602,7 +1614,7 @@ class EAGLEWorkerV2(BaseSpecWorker):
+                     device=self.device,
+                     hidden_size=hidden_size,
+                     dtype=hidden_dtype,
+-                    topk=self.topk,
++                    topk=self.carry_topk or self.topk,
+                     capture_hidden_mode=capture_mode,
+                     vocab_size=self.draft_worker.draft_probs_vocab_size,
+                 )
+@@ -1786,7 +1798,7 @@ class EAGLEWorkerV2(BaseSpecWorker):
+                 device=self.device,
+                 hidden_size=hidden_size,
+                 dtype=hidden_dtype,
+-                topk=self.topk,
++                topk=self.carry_topk or self.topk,
+                 capture_hidden_mode=CaptureHiddenMode.LAST,
+             )
+         plan.apply(draft_batch, "draft", rank, local_only=draft_local_only)
+@@ -1895,10 +1907,10 @@ class EAGLEWorkerV2(BaseSpecWorker):
+         bs = batch.seq_lens.shape[0]
+         device = self.device
+         next_draft_input.topk_p = torch.zeros(
+-            (bs, self.topk), dtype=torch.float32, device=device
++            (bs, self.carry_topk or self.topk), dtype=torch.float32, device=device
+         )
+         next_draft_input.topk_index = torch.zeros(
+-            (bs, self.topk), dtype=torch.int64, device=device
++            (bs, self.carry_topk or self.topk), dtype=torch.int64, device=device
+         )
+         hidden_size, hidden_dtype = get_draft_recurrent_hidden_state_spec(
+             self.draft_worker.draft_runner
+@@ -1929,15 +1941,22 @@ class EAGLEWorkerV2(BaseSpecWorker):
+         speculative_num_steps: int,
+         speculative_num_draft_tokens: int,
+         cuda_graph_bs=None,
++        speculative_eagle_topk: int | None = None,
+     ) -> SpecRuntimeState:
+         """Build a SpecRuntimeState for the given step configuration."""
+         tic = time.perf_counter()
+         before_mem = get_available_gpu_memory(self.device, self.gpu_id)
++        if speculative_eagle_topk is not None and speculative_eagle_topk > self.carry_topk:
++            raise ValueError(
++                f"adaptive draft_topk {speculative_eagle_topk} exceeds "
++                f"--speculative-eagle-topk {self.carry_topk}, the carried root top-k width"
++            )
+ 
+         with self._override_worker_state(
+             speculative_num_steps,
+             speculative_num_draft_tokens,
+             cuda_graph_bs=cuda_graph_bs,
++            speculative_eagle_topk=speculative_eagle_topk,
+         ):
+             # Draft overrides must end before target resources are constructed.
+             with (
+@@ -2000,6 +2019,7 @@ class EAGLEWorkerV2(BaseSpecWorker):
+                 target_graph_runner=target_graph_runner,
+                 draft_extend_attn_backend=self._draft_worker.draft_extend_attn_backend,
+                 cuda_graph_runner_for_draft_extend=self._draft_worker.cuda_graph_runner_for_draft_extend,
++                speculative_eagle_topk=speculative_eagle_topk,
+             )
+ 
+         after_mem = get_available_gpu_memory(self.device, self.gpu_id)
+@@ -2025,14 +2045,23 @@ class EAGLEWorkerV2(BaseSpecWorker):
+             f"{state.speculative_num_draft_tokens}",
+         )
+ 
++        topk_override = (
++            {}
++            if state.speculative_eagle_topk is None
++            else {"speculative_eagle_topk": state.speculative_eagle_topk}
++        )
+         # Top-level
+         self.speculative_num_steps = state.speculative_num_steps
+         self.speculative_num_draft_tokens = state.speculative_num_draft_tokens
++        if state.speculative_eagle_topk is not None:
++            self.topk = state.speculative_eagle_topk
+ 
+         # Draft side
+         dw = self._draft_worker
+         dw.speculative_num_steps = state.speculative_num_steps
+         dw.speculative_num_draft_tokens = state.speculative_num_draft_tokens
++        if state.speculative_eagle_topk is not None:
++            dw.topk = state.speculative_eagle_topk
+         dw.draft_attn_backend = state.draft_attn_backend
+         dw.draft_runner.draft_attn_backend = state.draft_attn_backend
+         dw.cuda_graph_runner = state.cuda_graph_runner
+@@ -2057,6 +2086,7 @@ class EAGLEWorkerV2(BaseSpecWorker):
+             "adaptive_spec.restore",
+             speculative_num_steps=state.speculative_num_steps,
+             speculative_num_draft_tokens=state.speculative_num_draft_tokens,
++            **topk_override,
+         )
+ 
+     @contextlib.contextmanager
+@@ -2065,9 +2095,15 @@ class EAGLEWorkerV2(BaseSpecWorker):
+         speculative_num_steps: int,
+         speculative_num_draft_tokens: int,
+         cuda_graph_bs: list[int] | None = None,
++        speculative_eagle_topk: int | None = None,
+     ):
+         """Temporarily override server_args and worker attributes for graph capture."""
+         dw = self._draft_worker
++        topk_backup = (
++            None
++            if speculative_eagle_topk is None
++            else (self.topk, dw.topk, get_spec().speculative_eagle_topk)
++        )
+         backup = (
+             self.speculative_num_steps,
+             self.speculative_num_draft_tokens,
+@@ -2094,6 +2130,12 @@ class EAGLEWorkerV2(BaseSpecWorker):
+             speculative_num_steps=speculative_num_steps,
+             speculative_num_draft_tokens=speculative_num_draft_tokens,
+         )
++        if speculative_eagle_topk is not None:
++            self.topk = dw.topk = speculative_eagle_topk
++            get_context().override(
++                "adaptive_spec.capture_override",
++                speculative_eagle_topk=speculative_eagle_topk,
++            )
+         if cuda_graph_bs is not None:
+             # BS-aware adaptive spec may prune cuda_graph_bs to an empty list
+             # for steps that no BS range uses (e.g. step=1). Disable graph
+@@ -2128,6 +2170,12 @@ class EAGLEWorkerV2(BaseSpecWorker):
+                 cuda_graph_bs_decode=backup[12],
+                 disable_cuda_graph=backup[13],
+             )
++            if topk_backup is not None:
++                self.topk, dw.topk = topk_backup[:2]
++                get_context().override(
++                    "adaptive_spec.capture_restore",
++                    speculative_eagle_topk=topk_backup[2],
++                )
+             dw._rebuild_topk1_chain_buffers()
+ 
+     def verify(self, batch: ScheduleBatch, pp_proxy_tensors=None, grammar_barrier=None):
+diff --git a/python/sglang/srt/speculative/spec_info.py b/python/sglang/srt/speculative/spec_info.py
+index 0a39f91dae..4bb3e4723f 100644
+--- a/python/sglang/srt/speculative/spec_info.py
++++ b/python/sglang/srt/speculative/spec_info.py
+@@ -277,15 +277,12 @@ class SpeculativeAlgorithm(Enum):
+             return cfg.speculative_num_draft_tokens
+ 
+         from sglang.srt.speculative.adaptive_spec_params import (
+-            resolve_candidate_steps_from_config,
++            resolve_draft_tokens_for_steps,
+         )
+ 
+-        candidate_steps = resolve_candidate_steps_from_config(
+-            cfg_path=cfg.speculative_adaptive_config,
++        return max(
++            resolve_draft_tokens_for_steps(cfg_path=cfg.speculative_adaptive_config).values()
+         )
+-        # Adaptive spec requires topk=1 today, so each runtime state needs
+-        # steps + 1 draft-token slots. Revisit this if topk>1 is supported.
+-        return max(candidate_steps) + 1
+ 
+     def get_num_tokens_per_req_for_target_verify(
+         self, num_draft_tokens: int, is_draft_worker: bool
+diff --git a/test/registered/unit/spec/test_adaptive_runtime_state.py b/test/registered/unit/spec/test_adaptive_runtime_state.py
+index 0465300c25..8cb8e64b35 100644
+--- a/test/registered/unit/spec/test_adaptive_runtime_state.py
++++ b/test/registered/unit/spec/test_adaptive_runtime_state.py
+@@ -56,6 +56,12 @@ class _FakePolicy:
+     def get_steps_for_batch(self, batch_size: int) -> int:
+         return 1 if batch_size >= 8 else 3
+ 
++    def draft_tokens_for_step(self, step: int) -> int:
++        return step + 1
++
++    def draft_topk_for_step(self, step: int) -> int | None:
++        return None
++
+     def on_verify_complete(
+         self, num_correct_drafts_per_req: list[int], batch_size: int
+     ) -> int | None:

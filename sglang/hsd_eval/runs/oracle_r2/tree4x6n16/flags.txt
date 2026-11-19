@@ -1,0 +1,1 @@
+--speculative-num-steps 6 --speculative-eagle-topk 4 --speculative-num-draft-tokens 16 --mem-fraction-static 0.7 --max-running-requests 64

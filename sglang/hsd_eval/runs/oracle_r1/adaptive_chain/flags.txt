@@ -1,0 +1,1 @@
+--speculative-adaptive --speculative-eagle-topk 1 --mem-fraction-static 0.7 --max-running-requests 64
